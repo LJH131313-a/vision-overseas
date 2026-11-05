@@ -188,7 +188,7 @@ generatedActions.forEach((a) => { if (!actionsMap.has(a.id)) actionsMap.set(a.id
 const actions = [...actionsMap.values()], materials = [...materialsMap.values()];
 log('行动', actions.length, '| 材料', materials.length);
 
-/* ---------- 5. HS 候选（PKV2 54 + 任务三核验 7） ---------- */
+/* ---------- 5. HS 候选（PKV2 54 + 任务三核验 7 + 扩展 4） ---------- */
 const hsMap = new Map();
 pk.hsCandidates.forEach((h) => hsMap.set(h.candidate_id, {
   id: h.candidate_id, market: h.market, legacyProduct: h.product_id || '', code: h.code,
@@ -208,18 +208,85 @@ ds.tables['HS候选与归类依据'].forEach((h) => {
   };
   hsMap.set(id, item);
 });
+(ext.tables['HS候选与归类依据'] || []).forEach((h) => {
+  const id = h.candidate_id;
+  if (!hsMap.has(id)) hsMap.set(id, {
+    id, market: h.market, legacyProduct: h.product_id || '', code: h.code,
+    desc: h.description || '', support: h.support || '', questions: h.distinguishing_questions || '',
+    sourceIds: h.source_ids || [], locator: h.locator || '', gri: h.gri || '',
+    review: h.review_status || '', asOf: h.effective_as_of || '', tariffVersion: h.tariff_version || '',
+    notFinal: true, origin: 'formal_extension',
+  });
+});
 const hsCandidates = [...hsMap.values()];
-log('HS 候选', hsCandidates.length, '条');
+log('HS 候选', hsCandidates.length, '条（含扩展 4：电吹风/电熨斗 SG/AU）');
 
 /* ---------- 6. 税费画像与覆盖等级 ---------- */
 const coverage = { ...covProfiles.levelDefinitions };
 const covList = new Map();
 (pk.coverageProfiles || []).forEach((c) => covList.set(c.market + '|' + c.product_type, { market: c.market, legacy: c.product_type, level: c.level, label: c.label, productId: c.product_id }));
 (covProfiles.profiles || []).forEach((c) => covList.set(c.market + '|' + c.product_type, { market: c.market, legacy: c.product_type, level: c.level, label: c.label, productId: c.product_id }));
-// 扩展画像（电吹风/电熨斗 SG/AU）
-[['SG','hair_dryer','L2','CPSR产品特定初筛'],['SG','iron','L2','CPSR产品特定初筛'],['AU','hair_dryer','L2','EESS产品特定初筛'],['AU','iron','L2','EESS产品特定初筛']]
-  .forEach(([m, t, l, lb]) => { if (!covList.has(m + '|' + t)) covList.set(m + '|' + t, { market: m, legacy: t, level: l, label: lb }); });
+// 扩展画像（电吹风/电熨斗 SG/AU），product_id 桥接旧 ID 以便 HS 候选命中
+[['SG','hair_dryer','L2','CPSR产品特定初筛','P-HDR-01'],['SG','iron','L2','CPSR产品特定初筛','P-IRN-01'],['AU','hair_dryer','L2','EESS产品特定初筛','P-HDR-01'],['AU','iron','L2','EESS产品特定初筛','P-IRN-01']]
+  .forEach(([m, t, l, lb, pid]) => { if (!covList.has(m + '|' + t)) covList.set(m + '|' + t, { market: m, legacy: t, level: l, label: lb, productId: pid }); });
 log('覆盖画像', covList.size, '| 税费画像', taxProfiles.length);
+
+/* ---------- 6b. 税种与公式知识库（19 条）+ 贸易术语承担矩阵（3 条）+ 表单选项集 ---------- */
+const taxRules = ds.tables['税率税种与公式'].map((r) => ({
+  id: r.tax_rule_id, market: r.market, type: r.type, rate: (r.rate === null || r.rate === undefined ? null : r.rate),
+  rateUnit: r.rate_unit || '', base: r.base || '', formula: r.formula || '', conditions: r.conditions || '',
+  sourceIds: r.source_ids || [], locator: r.locator || '', effectiveFrom: r.effective_from || null, effectiveTo: r.effective_to || null,
+  verifiedAsOf: r.verified_as_of || '', dateStatus: r.date_status || '', classification: r.classification || '',
+  status: r.status || '', missingBehavior: r.missing_behavior || '', rounding: r.rounding || '',
+}));
+const incotermMatrix = ds.tables['贸易术语与费用承担'].map((r) => ({
+  term: r.term, mode: r.mode, seller: r.seller, buyer: r.buyer, dutyRateEffect: r.duty_rate_effect, valuation: r.valuation, sourceIds: [r.source_id].filter(Boolean),
+}));
+const refOpts = J(join(P.qianwen, 'data/reference_options.json'));
+const formOptions = {
+  currencies: refOpts.currencies, origins: refOpts.origins, transportModes: refOpts.transportModes,
+  incoterms: refOpts.incoterms, importRoutes: refOpts.importRoutes, channels: refOpts.channels,
+  importerRoles: refOpts.importerRoles,
+};
+log('税种公式', taxRules.length, '| 贸易术语矩阵', incotermMatrix.length, '| 表单选项 币种', formOptions.currencies.length, '贸易术语', formOptions.incoterms.length);
+
+/* ---------- 6c. 变量计算式模板（前置研究：马来西亚 SST / 德国·欧盟进口增值税） ---------- */
+/* 这些是研究示例：税率未核实前保留变量 d/s/v，绝不代入默认数值。 */
+const taxTemplates = [
+  {
+    market: 'MY', label: '马来西亚半岛：关税 + 进口销售税（SST）变量计算式',
+    scenario: '测算示例（非企业订单）：100 台，审定完税价格合计 MYR 20,000。',
+    lines: [
+      '设适用从价关税税率为 d、销售税税率为 s、应纳消费税额为 E',
+      '关税 = 20,000 × d',
+      '进口销售税 = (20,000 + 20,000 × d + E) × s',
+      '每台成本评估另分摊检测、标签、境内配送及渠道费用；已含在完税价格中的运保费不得重复计入',
+    ],
+    mustConfirm: ['税目候选经马来西亚税则与商品描述复核', '销售税/消费税适用性与豁免经确认', '税率与豁免经官方来源核实后才可代入数值'],
+    sources: [
+      { label: '马来西亚海关 HS Explorer', url: 'https://ezhs.customs.gov.my/public-home' },
+      { label: '马来西亚销售税法第 9、10 条（Sales Tax Act 2018 PDF）', url: 'https://www.mysst.customs.gov.my/assets/document/SST%20Act/Sales%20Tax%20Act%202018_b.pdf' },
+    ],
+    note: '本页只保留变量式，不输出数值结果：未知税率不得按零处理。',
+  },
+  {
+    market: 'DE', label: '德国（欧盟）：关税 + 进口增值税变量计算式',
+    scenario: '测算示例（非企业订单）：50 套，审定完税价格合计 EUR 20,000，到德国第一目的地应计附带费用 EUR 500（未含在完税价格中）。',
+    lines: [
+      '设关税率 d、适用进口增值税率 v',
+      '关税 = 20,000 × d',
+      '进口增值税 = (20,500 + 20,000 × d) × v',
+      '可抵扣税额须经进口主体资格与单证确认，不直接计入永久成本',
+    ],
+    mustConfirm: ['完整 CN 编码与附加措施经 TARIC 核查（成套商品归类存在争议时申请 EBTI）', '进口 VAT 率与递延安排按德国现行规定确认', '附带费用是否计入完税价格经确认'],
+    sources: [
+      { label: '欧盟 TARIC 咨询', url: 'https://ec.europa.eu/taxation_customs/dds2/taric/taric_consultation.jsp?Lang=en' },
+      { label: '欧盟税则预裁定 EBTI', url: 'https://taxation-customs.ec.europa.eu/online-services/online-services-and-databases-customs/european-binding-tariff-information-ebti_en' },
+      { label: '欧委会德国进口增值税说明', url: 'https://trade.ec.europa.eu/access-to-markets/de/content/mehrwertsteuer-0' },
+    ],
+    note: '本页只保留变量式，不输出数值结果。',
+  },
+];
 
 /* ---------- 7. 法规索引（79 条，含 MY/DE 等导航级） ---------- */
 const topics = ds.tables['监管主题'].map((t) => ({ id: t.topic_id, name: t['名称'] }));
@@ -426,7 +493,7 @@ const voData = {
     dataSources: [
       '任务二：小家电产品小类资料 Sourcing 数据库（57 小类／80 字段／773 动态映射，快照 ' + SNAP + '）',
       '任务三：法规 Sourcing 与核验数据包（79 法规／245 来源／56 条件规则，快照 ' + SNAP + '）',
-      '正式合规项目 dataset（规则、行动、材料、HS 候选、税费画像，快照 2026-11-03/04）',
+      '正式合规项目 dataset（规则、行动、材料、HS 候选、19 条税种与公式、贸易术语承担矩阵、参考选项集、税费画像，快照 2026-11-03/04）',
       '《小家电出海工作台前置研究》企业档案（小熊电器、石头科技，核验日 2026-11-04）',
       'PolicyRadar 新闻雷达快照与 RSS/Atom 来源配置',
     ],
@@ -435,6 +502,7 @@ const voData = {
   jurisdictions, categories, groups, subcategories, fields, ruleFields, dynamicMap, judgments,
   topics, regulations, sources, rules, actions, materials, productRuleLinks,
   hsCandidates, taxProfiles, coverageProfiles: [...covList.values()],
+  taxRules, incotermMatrix, formOptions, taxTemplates,
   coverageMatrix, hsTaxAudit, gapsSummary,
   companies,
 };

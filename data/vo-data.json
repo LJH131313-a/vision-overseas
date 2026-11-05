@@ -2,14 +2,14 @@
  "meta": {
   "app": "远见·企业出海助手",
   "version": "2.0.0",
-  "generatedAt": "2026-11-05T03:14:21.055Z",
+  "generatedAt": "2026-11-05T08:09:44.280Z",
   "dataAsOf": "2026-11-04",
   "builtAt": "2026-11-05",
   "scope": "面向中国小家电出海的条件初筛、HS/税费阶段测算、政策新闻筛选与建议任务生成；不替代主管机关、认证机构、律师、税务顾问或海关决定。",
   "dataSources": [
    "任务二：小家电产品小类资料 Sourcing 数据库（57 小类／80 字段／773 动态映射，快照 2026-11-04）",
    "任务三：法规 Sourcing 与核验数据包（79 法规／245 来源／56 条件规则，快照 2026-11-04）",
-   "正式合规项目 dataset（规则、行动、材料、HS 候选、税费画像，快照 2026-11-03/04）",
+   "正式合规项目 dataset（规则、行动、材料、HS 候选、19 条税种与公式、贸易术语承担矩阵、参考选项集、税费画像，快照 2026-11-03/04）",
    "《小家电出海工作台前置研究》企业档案（小熊电器、石头科技，核验日 2026-11-04）",
    "PolicyRadar 新闻雷达快照与 RSS/Atom 来源配置"
   ],
@@ -32645,6 +32645,84 @@
    "tariffVersion": "SG STCCED2022现行门户链接；AU现行工作税则快照",
    "notFinal": true,
    "origin": "task3_verified"
+  },
+  {
+   "id": "HS-SG-H1",
+   "market": "SG",
+   "legacyProduct": "P-HDR-01",
+   "code": "851631",
+   "desc": "Hair dryers（HS6方向）",
+   "support": "完整电热式头发吹干器，税目8516.31直接列名",
+   "questions": "是否用于人体头发、主要功能是否为吹干、是否为完整设备？",
+   "sourceIds": [
+    "SRC-168",
+    "SRC-164"
+   ],
+   "locator": "STCCED/AHTN 2022税目8516.31；8位码待复核",
+   "gri": "GIR 1与6",
+   "review": "HS6候选；新加坡8位码和个案事实待专业复核",
+   "asOf": "2026-11-04",
+   "tariffVersion": "SG STCCED2022现行门户链接",
+   "notFinal": true,
+   "origin": "formal_extension"
+  },
+  {
+   "id": "HS-SG-I1",
+   "market": "SG",
+   "legacyProduct": "P-IRN-01",
+   "code": "851640",
+   "desc": "Electric smoothing irons（HS6方向）",
+   "support": "完整电热式织物熨平器具，税目8516.40直接列名",
+   "questions": "是否家用手持电熨斗，而非工业压机或焊接烙铁？",
+   "sourceIds": [
+    "SRC-168",
+    "SRC-164"
+   ],
+   "locator": "STCCED/AHTN 2022税目8516.40；8位码待复核",
+   "gri": "GIR 1与6",
+   "review": "HS6候选；新加坡8位码和个案事实待专业复核",
+   "asOf": "2026-11-04",
+   "tariffVersion": "SG STCCED2022现行门户链接",
+   "notFinal": true,
+   "origin": "formal_extension"
+  },
+  {
+   "id": "HS-AU-H1",
+   "market": "AU",
+   "legacyProduct": "P-HDR-01",
+   "code": "85163100",
+   "desc": "Hair dryers",
+   "support": "澳洲现行Chapter 85直接列Hair dryers，普通税率Free",
+   "questions": "是否为头发吹干器而非手部干燥器或其他头发造型设备？",
+   "sourceIds": [
+    "SRC-177"
+   ],
+   "locator": "Chapter 85, 8516.31.00, statistical code 26",
+   "gri": "GIR 1与6",
+   "review": "目的国候选；最终归类待复核",
+   "asOf": "2026-11-04",
+   "tariffVersion": "AU current tariff Chapter 85快照",
+   "notFinal": true,
+   "origin": "formal_extension"
+  },
+  {
+   "id": "HS-AU-I1",
+   "market": "AU",
+   "legacyProduct": "P-IRN-01",
+   "code": "85164000",
+   "desc": "Electric smoothing irons",
+   "support": "澳洲现行Chapter 85直接列Electric smoothing irons，普通税率Free",
+   "questions": "是否为电热织物熨平器，而非工业压机或焊接烙铁？",
+   "sourceIds": [
+    "SRC-177"
+   ],
+   "locator": "Chapter 85, 8516.40.00, statistical code 29",
+   "gri": "GIR 1与6",
+   "review": "目的国候选；最终归类待复核",
+   "asOf": "2026-11-04",
+   "tariffVersion": "AU current tariff Chapter 85快照",
+   "notFinal": true,
+   "origin": "formal_extension"
   }
  ],
  "taxProfiles": [
@@ -33178,6 +33256,859 @@
    "level": "L2",
    "label": "EESS产品特定初筛",
    "productId": "P-IRN-01"
+  }
+ ],
+ "taxRules": [
+  {
+   "id": "TX-SG-D0",
+   "market": "SG",
+   "type": "普通关税",
+   "rate": 0,
+   "rateUnit": "比例",
+   "base": "非四类应税商品",
+   "formula": "D=0",
+   "conditions": "普通完整水壶85167910/烤片机85167200；非酒烟车石油等",
+   "sourceIds": [
+    "SRC-170",
+    "SRC-173",
+    "SRC-168"
+   ],
+   "locator": "Dutiable goods四类；税则产品描述",
+   "effectiveFrom": null,
+   "effectiveTo": null,
+   "verifiedAsOf": "2026-11-03",
+   "dateStatus": "法定起日未核时为null；非将核查日作生效日",
+   "classification": "税",
+   "status": "已核一般规则；交易适用仍需确认",
+   "missingBehavior": "null；不得按0补齐",
+   "rounding": "案例用十进制到分；最终按申报系统/正式规则核对；分摊值不逐台舍入"
+  },
+  {
+   "id": "TX-SG-G9",
+   "market": "SG",
+   "type": "进口GST",
+   "rate": 0.09,
+   "rateUnit": "比例",
+   "base": "CIF+适用关税，或满足条件的LSP+适用关税",
+   "formula": "GST=(B+D)*0.09",
+   "conditions": "一般本地应税批量进口，无豁免、保税或销售端特殊征收",
+   "sourceIds": [
+    "SRC-171",
+    "SRC-174",
+    "SRC-217"
+   ],
+   "locator": "Customs GST calculation；IRAS current rates",
+   "effectiveFrom": "2024-01-01",
+   "effectiveTo": null,
+   "verifiedAsOf": "2026-11-03",
+   "dateStatus": "法定起日未核时为null；非将核查日作生效日",
+   "classification": "税",
+   "status": "已核一般规则；交易适用仍需确认",
+   "missingBehavior": "null；不得按0补齐",
+   "rounding": "案例用十进制到分；最终按申报系统/正式规则核对；分摊值不逐台舍入"
+  },
+  {
+   "id": "TX-SG-V",
+   "market": "SG",
+   "type": "估价",
+   "rate": null,
+   "rateUnit": "依公式或待核",
+   "base": "成交价格+未含入境运保及法定加项",
+   "formula": "CIF=goods+freight+insurance+adjustments",
+   "conditions": "无关联影响、无销售调拨等特殊事实；已含项不可重复",
+   "sourceIds": [
+    "SRC-172"
+   ],
+   "locator": "Transaction Value Method",
+   "effectiveFrom": null,
+   "effectiveTo": null,
+   "verifiedAsOf": "2026-11-03",
+   "dateStatus": "法定起日未核时为null；非将核查日作生效日",
+   "classification": "计税基础",
+   "status": "已核一般规则；交易适用仍需确认",
+   "missingBehavior": "null；不得按0补齐",
+   "rounding": "案例用十进制到分；最终按申报系统/正式规则核对；分摊值不逐台舍入"
+  },
+  {
+   "id": "TX-SG-LSP",
+   "market": "SG",
+   "type": "最后售价分支",
+   "rate": null,
+   "rateUnit": "依公式或待核",
+   "base": "最后买方向海关申报的LSP",
+   "formula": "GST=LSP*0.09（普通商品D=0）",
+   "conditions": "进口前多次买卖，最后买方为申报缴税许可主体；按官方条件核",
+   "sourceIds": [
+    "SRC-171"
+   ],
+   "locator": "GST page LSP example",
+   "effectiveFrom": null,
+   "effectiveTo": null,
+   "verifiedAsOf": "2026-11-03",
+   "dateStatus": "法定起日未核时为null；非将核查日作生效日",
+   "classification": "计税基础",
+   "status": "已核一般规则；交易适用仍需确认",
+   "missingBehavior": "null；不得按0补齐",
+   "rounding": "案例用十进制到分；最终按申报系统/正式规则核对；分摊值不逐台舍入"
+  },
+  {
+   "id": "TX-SG-FX",
+   "market": "SG",
+   "type": "外币换算",
+   "rate": null,
+   "rateUnit": "依公式或待核",
+   "base": "各外币法定金额",
+   "formula": "SGD=sum(amount_currency*approved_weekly_rate)",
+   "conditions": "必须保留许可/估值日期及当周适用MAS周均来源，未取得实值阻断",
+   "sourceIds": [
+    "SRC-228"
+   ],
+   "locator": "Customs Exchange Rates",
+   "effectiveFrom": null,
+   "effectiveTo": null,
+   "verifiedAsOf": "2026-11-03",
+   "dateStatus": "法定起日未核时为null；非将核查日作生效日",
+   "classification": "计税基础",
+   "status": "已核一般规则；交易适用仍需确认",
+   "missingBehavior": "null；不得按0补齐",
+   "rounding": "案例用十进制到分；最终按申报系统/正式规则核对；分摊值不逐台舍入"
+  },
+  {
+   "id": "TX-SG-P90",
+   "market": "SG",
+   "type": "TradeNet法定许可费",
+   "rate": 0.9,
+   "rateUnit": "当地币种固定金额/次",
+   "base": "每次许可申请",
+   "formula": "statutory_fee=0.90*applications",
+   "conditions": "自提交的一般许可；特别许可/其他服务另核",
+   "sourceIds": [
+    "SRC-202"
+   ],
+   "locator": "TradeNet Permit Applications",
+   "effectiveFrom": null,
+   "effectiveTo": null,
+   "verifiedAsOf": "2026-11-03",
+   "dateStatus": "法定起日未核时为null；非将核查日作生效日",
+   "classification": "法定规费",
+   "status": "已核一般规则；交易适用仍需确认",
+   "missingBehavior": "null；不得按0补齐",
+   "rounding": "案例用十进制到分；最终按申报系统/正式规则核对；分摊值不逐台舍入"
+  },
+  {
+   "id": "TX-SG-OP",
+   "market": "SG",
+   "type": "TradeNet操作及消息费用",
+   "rate": 2.29,
+   "rateUnit": "当地币种固定金额/次",
+   "base": "典型每次许可申请",
+   "formula": "indicative_operator_fee=2.29*applications",
+   "conditions": "官方表给典型约3.19总价；不当作海关税额",
+   "sourceIds": [
+    "SRC-202"
+   ],
+   "locator": "3.19=0.90+2.29",
+   "effectiveFrom": null,
+   "effectiveTo": null,
+   "verifiedAsOf": "2026-11-03",
+   "dateStatus": "法定起日未核时为null；非将核查日作生效日",
+   "classification": "系统操作费用参考",
+   "status": "已核一般规则；交易适用仍需确认",
+   "missingBehavior": "null；不得按0补齐",
+   "rounding": "案例用十进制到分；最终按申报系统/正式规则核对；分摊值不逐台舍入"
+  },
+  {
+   "id": "TX-SG-REG",
+   "market": "SG",
+   "type": "新品注册费",
+   "rate": 180,
+   "rateUnit": "当地币种固定金额/次",
+   "base": "每新型号注册",
+   "formula": "fee=180*new_models",
+   "conditions": "CPSR中风险路径，CAB其他收费另取报价；不计每票进口税",
+   "sourceIds": [
+    "SRC-164"
+   ],
+   "locator": "手册5.3 PDF40页",
+   "effectiveFrom": null,
+   "effectiveTo": null,
+   "verifiedAsOf": "2026-11-03",
+   "dateStatus": "法定起日未核时为null；非将核查日作生效日",
+   "classification": "合规行政收费",
+   "status": "已核一般规则；交易适用仍需确认",
+   "missingBehavior": "null；不得按0补齐",
+   "rounding": "案例用十进制到分；最终按申报系统/正式规则核对；分摊值不逐台舍入"
+  },
+  {
+   "id": "TX-SG-REN",
+   "market": "SG",
+   "type": "CoC续期注册费",
+   "rate": 50,
+   "rateUnit": "当地币种固定金额/次",
+   "base": "每续期申请",
+   "formula": "fee=50*renewals",
+   "conditions": "CAB其他收费另取；不计每票进口税",
+   "sourceIds": [
+    "SRC-164"
+   ],
+   "locator": "手册5.4 PDF41页",
+   "effectiveFrom": null,
+   "effectiveTo": null,
+   "verifiedAsOf": "2026-11-03",
+   "dateStatus": "法定起日未核时为null；非将核查日作生效日",
+   "classification": "合规行政收费",
+   "status": "已核一般规则；交易适用仍需确认",
+   "missingBehavior": "null；不得按0补齐",
+   "rounding": "案例用十进制到分；最终按申报系统/正式规则核对；分摊值不逐台舍入"
+  },
+  {
+   "id": "TX-AU-K5",
+   "market": "AU",
+   "type": "水壶普通关税",
+   "rate": 0.05,
+   "rateUnit": "比例",
+   "base": "customs value CV，非自动CIF",
+   "formula": "D=CV*0.05",
+   "conditions": "85167900统计35；无优惠、TCO或其他减免主张",
+   "sourceIds": [
+    "SRC-177"
+   ],
+   "locator": "Chapter85 8516.79.00",
+   "effectiveFrom": null,
+   "effectiveTo": null,
+   "verifiedAsOf": "2026-11-03",
+   "dateStatus": "法定起日未核时为null；非将核查日作生效日",
+   "classification": "税",
+   "status": "已核一般规则；交易适用仍需确认",
+   "missingBehavior": "null；不得按0补齐",
+   "rounding": "案例用十进制到分；最终按申报系统/正式规则核对；分摊值不逐台舍入"
+  },
+  {
+   "id": "TX-AU-T0",
+   "market": "AU",
+   "type": "烤片机普通关税",
+   "rate": 0,
+   "rateUnit": "比例",
+   "base": "CV",
+   "formula": "D=0",
+   "conditions": "85167200统计05；须仍核措施",
+   "sourceIds": [
+    "SRC-177"
+   ],
+   "locator": "Chapter85 8516.72.00",
+   "effectiveFrom": null,
+   "effectiveTo": null,
+   "verifiedAsOf": "2026-11-03",
+   "dateStatus": "法定起日未核时为null；非将核查日作生效日",
+   "classification": "税",
+   "status": "已核一般规则；交易适用仍需确认",
+   "missingBehavior": "null；不得按0补齐",
+   "rounding": "案例用十进制到分；最终按申报系统/正式规则核对；分摊值不逐台舍入"
+  },
+  {
+   "id": "TX-AU-CN0",
+   "market": "AU",
+   "type": "ChAFTA优惠关税",
+   "rate": 0,
+   "rateUnit": "比例",
+   "base": "符合原产条件的CV",
+   "formula": "D=0",
+   "conditions": "CN originating及有效证明/运输/申报均满足；851672/851679 HS2012 PSR=CTSH；不是CN启运自动适用",
+   "sourceIds": [
+    "SRC-233",
+    "SRC-207",
+    "SRC-235",
+    "SRC-236",
+    "SRC-237",
+    "SRC-238"
+   ],
+   "locator": "Schedule12；PSR中文PDF79页/英文114页；第三章原产证明",
+   "effectiveFrom": null,
+   "effectiveTo": null,
+   "verifiedAsOf": "2026-11-03",
+   "dateStatus": "法定起日未核时为null；非将核查日作生效日",
+   "classification": "税",
+   "status": "税率及PSR原文已核；企业个案资格未核",
+   "missingBehavior": "null；不得按0补齐",
+   "rounding": "案例用十进制到分；最终按申报系统/正式规则核对；分摊值不逐台舍入"
+  },
+  {
+   "id": "TX-AU-G10",
+   "market": "AU",
+   "type": "进口GST",
+   "rate": 0.1,
+   "rateUnit": "比例",
+   "base": "VoTI=CV+D+未含国际运保至法定托运地点+适用WET",
+   "formula": "GST=(CV+D+TI+WET)*0.10",
+   "conditions": "普通应税进口；本批普通电器WET不适用，有证据排除；递延/抵扣另记",
+   "sourceIds": [
+    "SRC-179",
+    "SRC-232"
+   ],
+   "locator": "GST Act13-15/13-20；ABF VoTI",
+   "effectiveFrom": null,
+   "effectiveTo": null,
+   "verifiedAsOf": "2026-11-03",
+   "dateStatus": "法定起日未核时为null；非将核查日作生效日",
+   "classification": "税",
+   "status": "已核一般规则；交易适用仍需确认",
+   "missingBehavior": "null；不得按0补齐",
+   "rounding": "案例用十进制到分；最终按申报系统/正式规则核对；分摊值不逐台舍入"
+  },
+  {
+   "id": "TX-AU-IPC50",
+   "market": "AU",
+   "type": "电子申报IPC",
+   "rate": 50,
+   "rateUnit": "当地币种固定金额/次",
+   "base": "每一般N10票",
+   "formula": "IPC=50",
+   "conditions": "CV>1000且<10000 AUD；电子申报",
+   "sourceIds": [
+    "SRC-180"
+   ],
+   "locator": "Import processing table",
+   "effectiveFrom": null,
+   "effectiveTo": null,
+   "verifiedAsOf": "2026-11-03",
+   "dateStatus": "法定起日未核时为null；非将核查日作生效日",
+   "classification": "法定规费",
+   "status": "已核一般规则；交易适用仍需确认",
+   "missingBehavior": "null；不得按0补齐",
+   "rounding": "案例用十进制到分；最终按申报系统/正式规则核对；分摊值不逐台舍入"
+  },
+  {
+   "id": "TX-AU-IPC152",
+   "market": "AU",
+   "type": "电子申报IPC",
+   "rate": 152,
+   "rateUnit": "当地币种固定金额/次",
+   "base": "每一般N10票",
+   "formula": "IPC=152",
+   "conditions": "CV>=10000 AUD；电子申报",
+   "sourceIds": [
+    "SRC-180"
+   ],
+   "locator": "Import processing table",
+   "effectiveFrom": null,
+   "effectiveTo": null,
+   "verifiedAsOf": "2026-11-03",
+   "dateStatus": "法定起日未核时为null；非将核查日作生效日",
+   "classification": "法定规费",
+   "status": "已核一般规则；交易适用仍需确认",
+   "missingBehavior": "null；不得按0补齐",
+   "rounding": "案例用十进制到分；最终按申报系统/正式规则核对；分摊值不逐台舍入"
+  },
+  {
+   "id": "TX-AU-BIO48",
+   "market": "AU",
+   "type": "空运完整申报生物安全费",
+   "rate": 48,
+   "rateUnit": "当地币种固定金额/次",
+   "base": "每完整进口申报",
+   "formula": "BIO=48",
+   "conditions": "CV>1000 AUD；空运",
+   "sourceIds": [
+    "SRC-180",
+    "SRC-224"
+   ],
+   "locator": "ACN2026/23",
+   "effectiveFrom": "2026-07-01",
+   "effectiveTo": null,
+   "verifiedAsOf": "2026-11-03",
+   "dateStatus": "法定起日未核时为null；非将核查日作生效日",
+   "classification": "法定规费",
+   "status": "已核一般规则；交易适用仍需确认",
+   "missingBehavior": "null；不得按0补齐",
+   "rounding": "案例用十进制到分；最终按申报系统/正式规则核对；分摊值不逐台舍入"
+  },
+  {
+   "id": "TX-AU-BIO71",
+   "market": "AU",
+   "type": "海运完整申报生物安全费",
+   "rate": 71,
+   "rateUnit": "当地币种固定金额/次",
+   "base": "每完整进口申报",
+   "formula": "BIO=71",
+   "conditions": "CV>1000 AUD；海运",
+   "sourceIds": [
+    "SRC-180",
+    "SRC-224"
+   ],
+   "locator": "ACN2026/23",
+   "effectiveFrom": "2026-07-01",
+   "effectiveTo": null,
+   "verifiedAsOf": "2026-11-03",
+   "dateStatus": "法定起日未核时为null；非将核查日作生效日",
+   "classification": "法定规费",
+   "status": "已核一般规则；交易适用仍需确认",
+   "missingBehavior": "null；不得按0补齐",
+   "rounding": "案例用十进制到分；最终按申报系统/正式规则核对；分摊值不逐台舍入"
+  },
+  {
+   "id": "TX-REMEDY",
+   "market": "ALL",
+   "type": "附加及贸易救济",
+   "rate": null,
+   "rateUnit": "依公式或待核",
+   "base": "依具体措施",
+   "formula": "A=measure_specific_formula",
+   "conditions": "逐商品描述、原产、企业及日期完成查询；当前未取得完整实时措施结果",
+   "sourceIds": [
+    "SRC-190",
+    "SRC-216"
+   ],
+   "locator": "Dumping register；SG须当日复核",
+   "effectiveFrom": null,
+   "effectiveTo": null,
+   "verifiedAsOf": "2026-11-03",
+   "dateStatus": "法定起日未核时为null；非将核查日作生效日",
+   "classification": "未核项目",
+   "status": "不得把未查到当0；总税费状态保持部分可算",
+   "missingBehavior": "null；不得按0补齐",
+   "rounding": "案例用十进制到分；最终按申报系统/正式规则核对；分摊值不逐台舍入"
+  },
+  {
+   "id": "TX-RECOVER",
+   "market": "ALL",
+   "type": "GST抵扣/递延",
+   "rate": null,
+   "rateUnit": "依公式或待核",
+   "base": "实际符合资格的进口税",
+   "formula": "economic_cost=nonrecoverable_tax+fees",
+   "conditions": "仅GST注册不足以证明全额抵扣；须业务用途、进口主体和凭证；递延须批准",
+   "sourceIds": [
+    "SRC-217",
+    "SRC-179"
+   ],
+   "locator": "IRAS importing goods；ABF GST",
+   "effectiveFrom": null,
+   "effectiveTo": null,
+   "verifiedAsOf": "2026-11-03",
+   "dateStatus": "法定起日未核时为null；非将核查日作生效日",
+   "classification": "现金与成本",
+   "status": "已核一般规则；交易适用仍需确认",
+   "missingBehavior": "null；不得按0补齐",
+   "rounding": "案例用十进制到分；最终按申报系统/正式规则核对；分摊值不逐台舍入"
+  }
+ ],
+ "incotermMatrix": [
+  {
+   "term": "FOB",
+   "mode": "sea/inland_waterway",
+   "seller": "出口手续及装船前约定费用",
+   "buyer": "主运输、进口清关和税费",
+   "dutyRateEffect": "无直接影响",
+   "valuation": "商品FOB金额另加目的国要求的运保及调整",
+   "sourceIds": [
+    "SRC-192"
+   ]
+  },
+  {
+   "term": "CIF",
+   "mode": "sea/inland_waterway",
+   "seller": "出口、主运输及约定保险",
+   "buyer": "进口清关和税费",
+   "dutyRateEffect": "无直接影响",
+   "valuation": "先核已含运保，禁止重复加；AU需另确定CV与TI",
+   "sourceIds": [
+    "SRC-192"
+   ]
+  },
+  {
+   "term": "DDP",
+   "mode": "all",
+   "seller": "到指定地点并依合同承担进口清关与税费",
+   "buyer": "收货及合同特别约定费用",
+   "dutyRateEffect": "无直接影响",
+   "valuation": "须逐项拆分货价/运保/进口税/境内费；进口主体资格独立核",
+   "sourceIds": [
+    "SRC-192"
+   ]
+  }
+ ],
+ "formOptions": {
+  "currencies": [
+   {
+    "value": "CNY",
+    "label": "人民币（CNY）"
+   },
+   {
+    "value": "USD",
+    "label": "美元（USD）"
+   },
+   {
+    "value": "EUR",
+    "label": "欧元（EUR）"
+   },
+   {
+    "value": "GBP",
+    "label": "英镑（GBP）"
+   },
+   {
+    "value": "JPY",
+    "label": "日元（JPY）"
+   },
+   {
+    "value": "SGD",
+    "label": "新加坡元（SGD）"
+   },
+   {
+    "value": "AUD",
+    "label": "澳大利亚元（AUD）"
+   },
+   {
+    "value": "NZD",
+    "label": "新西兰元（NZD）"
+   },
+   {
+    "value": "CAD",
+    "label": "加拿大元（CAD）"
+   },
+   {
+    "value": "MYR",
+    "label": "马来西亚林吉特（MYR）"
+   },
+   {
+    "value": "THB",
+    "label": "泰铢（THB）"
+   },
+   {
+    "value": "VND",
+    "label": "越南盾（VND）"
+   },
+   {
+    "value": "IDR",
+    "label": "印度尼西亚卢比（IDR）"
+   },
+   {
+    "value": "KRW",
+    "label": "韩元（KRW）"
+   },
+   {
+    "value": "AED",
+    "label": "阿联酋迪拉姆（AED）"
+   }
+  ],
+  "origins": [
+   {
+    "value": "CN",
+    "label": "中国大陆"
+   },
+   {
+    "value": "HK",
+    "label": "中国香港"
+   },
+   {
+    "value": "TW",
+    "label": "中国台湾"
+   },
+   {
+    "value": "SG",
+    "label": "新加坡"
+   },
+   {
+    "value": "MY",
+    "label": "马来西亚"
+   },
+   {
+    "value": "TH",
+    "label": "泰国"
+   },
+   {
+    "value": "VN",
+    "label": "越南"
+   },
+   {
+    "value": "ID",
+    "label": "印度尼西亚"
+   },
+   {
+    "value": "PH",
+    "label": "菲律宾"
+   },
+   {
+    "value": "JP",
+    "label": "日本"
+   },
+   {
+    "value": "KR",
+    "label": "韩国"
+   },
+   {
+    "value": "IN",
+    "label": "印度"
+   },
+   {
+    "value": "AU",
+    "label": "澳大利亚"
+   },
+   {
+    "value": "NZ",
+    "label": "新西兰"
+   },
+   {
+    "value": "US",
+    "label": "美国"
+   },
+   {
+    "value": "CA",
+    "label": "加拿大"
+   },
+   {
+    "value": "GB",
+    "label": "英国"
+   },
+   {
+    "value": "DE",
+    "label": "德国"
+   },
+   {
+    "value": "FR",
+    "label": "法国"
+   },
+   {
+    "value": "IT",
+    "label": "意大利"
+   },
+   {
+    "value": "NL",
+    "label": "荷兰"
+   },
+   {
+    "value": "AE",
+    "label": "阿联酋"
+   },
+   {
+    "value": "SA",
+    "label": "沙特阿拉伯"
+   },
+   {
+    "value": "BR",
+    "label": "巴西"
+   },
+   {
+    "value": "MX",
+    "label": "墨西哥"
+   },
+   {
+    "value": "OTHER",
+    "label": "其他原产地"
+   },
+   {
+    "value": "",
+    "label": "尚未确认"
+   }
+  ],
+  "transportModes": [
+   {
+    "value": "sea",
+    "label": "海运"
+   },
+   {
+    "value": "air",
+    "label": "航空运输"
+   },
+   {
+    "value": "road",
+    "label": "公路运输"
+   },
+   {
+    "value": "rail",
+    "label": "铁路运输"
+   },
+   {
+    "value": "courier",
+    "label": "国际快递"
+   },
+   {
+    "value": "post",
+    "label": "国际邮政"
+   },
+   {
+    "value": "multimodal",
+    "label": "多式联运"
+   }
+  ],
+  "incoterms": [
+   {
+    "value": "EXW",
+    "label": "EXW｜工厂交货"
+   },
+   {
+    "value": "FCA",
+    "label": "FCA｜货交承运人"
+   },
+   {
+    "value": "FAS",
+    "label": "FAS｜船边交货"
+   },
+   {
+    "value": "FOB",
+    "label": "FOB｜船上交货"
+   },
+   {
+    "value": "CFR",
+    "label": "CFR｜成本加运费"
+   },
+   {
+    "value": "CIF",
+    "label": "CIF｜成本、保险费加运费"
+   },
+   {
+    "value": "CPT",
+    "label": "CPT｜运费付至"
+   },
+   {
+    "value": "CIP",
+    "label": "CIP｜运费和保险费付至"
+   },
+   {
+    "value": "DAP",
+    "label": "DAP｜目的地交货"
+   },
+   {
+    "value": "DPU",
+    "label": "DPU｜卸货地交货"
+   },
+   {
+    "value": "DDP",
+    "label": "DDP｜完税后交货"
+   }
+  ],
+  "importRoutes": [
+   {
+    "value": "bulk",
+    "label": "一般贸易批量进口"
+   },
+   {
+    "value": "warehouse",
+    "label": "当地仓／海外仓备货"
+   },
+   {
+    "value": "courier",
+    "label": "国际快递直发"
+   },
+   {
+    "value": "postal",
+    "label": "国际邮政直发"
+   },
+   {
+    "value": "bonded",
+    "label": "保税仓／保税区"
+   },
+   {
+    "value": "cross_border_ecommerce",
+    "label": "跨境电商专门安排"
+   }
+  ],
+  "channels": [
+   {
+    "value": "B2B",
+    "label": "经销商／批发商（B2B）"
+   },
+   {
+    "value": "platform",
+    "label": "第三方电商平台"
+   },
+   {
+    "value": "DTC",
+    "label": "品牌独立站直销（DTC）"
+   },
+   {
+    "value": "retail",
+    "label": "当地线下零售"
+   },
+   {
+    "value": "project",
+    "label": "项目制或专业渠道"
+   }
+  ],
+  "importerRoles": [
+   {
+    "value": "local_distributor",
+    "label": "当地经销商担任进口申报主体"
+   },
+   {
+    "value": "own_overseas_entity",
+    "label": "企业自有境外主体担任进口申报主体"
+   },
+   {
+    "value": "buyer",
+    "label": "境外买方担任进口申报主体"
+   },
+   {
+    "value": "platform",
+    "label": "平台或平台指定主体"
+   },
+   {
+    "value": "third_party",
+    "label": "第三方进口服务商"
+   },
+   {
+    "value": "",
+    "label": "尚未确认"
+   }
+  ]
+ },
+ "taxTemplates": [
+  {
+   "market": "MY",
+   "label": "马来西亚半岛：关税 + 进口销售税（SST）变量计算式",
+   "scenario": "测算示例（非企业订单）：100 台，审定完税价格合计 MYR 20,000。",
+   "lines": [
+    "设适用从价关税税率为 d、销售税税率为 s、应纳消费税额为 E",
+    "关税 = 20,000 × d",
+    "进口销售税 = (20,000 + 20,000 × d + E) × s",
+    "每台成本评估另分摊检测、标签、境内配送及渠道费用；已含在完税价格中的运保费不得重复计入"
+   ],
+   "mustConfirm": [
+    "税目候选经马来西亚税则与商品描述复核",
+    "销售税/消费税适用性与豁免经确认",
+    "税率与豁免经官方来源核实后才可代入数值"
+   ],
+   "sources": [
+    {
+     "label": "马来西亚海关 HS Explorer",
+     "url": "https://ezhs.customs.gov.my/public-home"
+    },
+    {
+     "label": "马来西亚销售税法第 9、10 条（Sales Tax Act 2018 PDF）",
+     "url": "https://www.mysst.customs.gov.my/assets/document/SST%20Act/Sales%20Tax%20Act%202018_b.pdf"
+    }
+   ],
+   "note": "本页只保留变量式，不输出数值结果：未知税率不得按零处理。"
+  },
+  {
+   "market": "DE",
+   "label": "德国（欧盟）：关税 + 进口增值税变量计算式",
+   "scenario": "测算示例（非企业订单）：50 套，审定完税价格合计 EUR 20,000，到德国第一目的地应计附带费用 EUR 500（未含在完税价格中）。",
+   "lines": [
+    "设关税率 d、适用进口增值税率 v",
+    "关税 = 20,000 × d",
+    "进口增值税 = (20,500 + 20,000 × d) × v",
+    "可抵扣税额须经进口主体资格与单证确认，不直接计入永久成本"
+   ],
+   "mustConfirm": [
+    "完整 CN 编码与附加措施经 TARIC 核查（成套商品归类存在争议时申请 EBTI）",
+    "进口 VAT 率与递延安排按德国现行规定确认",
+    "附带费用是否计入完税价格经确认"
+   ],
+   "sources": [
+    {
+     "label": "欧盟 TARIC 咨询",
+     "url": "https://ec.europa.eu/taxation_customs/dds2/taric/taric_consultation.jsp?Lang=en"
+    },
+    {
+     "label": "欧盟税则预裁定 EBTI",
+     "url": "https://taxation-customs.ec.europa.eu/online-services/online-services-and-databases-customs/european-binding-tariff-information-ebti_en"
+    },
+    {
+     "label": "欧委会德国进口增值税说明",
+     "url": "https://trade.ec.europa.eu/access-to-markets/de/content/mehrwertsteuer-0"
+    }
+   ],
+   "note": "本页只保留变量式，不输出数值结果。"
   }
  ],
  "coverageMatrix": [

@@ -856,12 +856,14 @@
     }
     var sub = subById(p.scenario.subcategoryId);
     var sc = runCompliance();
+    var market = p.scenario.market;
 
+    /* A. HS 候选 */
     var hsCard = h('div', { class: 'card' });
     hsCard.appendChild(h('h3', {}, '目的国 HS 候选方向'));
     var cands = sc ? sc.hsCandidates : [];
     if (!cands.length) {
-      hsCard.appendChild(h('div', { class: 'banner bad' }, '当前「' + sub.name + ' × ' + (JUR[p.scenario.market] ? JUR[p.scenario.market].name : p.scenario.market) + '」组合尚无经来源关联的目的国 HS 候选。这是数据包的明确缺口：不冒充归类结论，也不按零税率处理。'));
+      hsCard.appendChild(h('div', { class: 'banner bad' }, '当前「' + sub.name + ' × ' + (JUR[market] ? JUR[market].name : market) + '」组合尚无经来源关联的目的国 HS 候选。这是数据包的明确缺口：不冒充归类结论，也不按零税率处理。'));
     } else {
       hsCard.appendChild(h('div', { class: 'banner warn' }, 'HS 候选只是归类研究方向，不是海关最终归类；最终编码以目的国税则与个案裁定为准。'));
       cands.forEach(function (c) {
@@ -875,6 +877,7 @@
         head.appendChild(h('b', {}, c.code));
         head.appendChild(h('span', { class: 'tag' }, c.market));
         head.appendChild(h('span', { class: 'tag warn' }, '候选方向'));
+        if (c.origin === 'task3_verified') head.appendChild(h('span', { class: 'tag ok' }, '任务三核验'));
         item.appendChild(head);
         item.appendChild(h('div', { class: 'body' }, (c.desc || '') + (c.support ? '。依据：' + c.support : '')));
         if (c.questions) item.appendChild(h('div', { class: 'subhint' }, '区分问题：' + c.questions));
@@ -886,91 +889,175 @@
     }
     host.appendChild(hsCard);
 
-    var market = p.scenario.market;
-    var card = h('div', { class: 'card' });
-    card.appendChild(h('h3', {}, '税费阶段测算（' + (market === 'SG' ? '新加坡' : market === 'AU' ? '澳大利亚' : JUR[market] ? JUR[market].name : market) + '）'));
-    if (market !== 'SG' && market !== 'AU') {
-      card.appendChild(h('div', { class: 'banner bad' }, '当前数据包仅对新加坡（SG）与澳大利亚（AU）建立了可复算的税费画像。其他目的地显示已知分项缺口，不能输出完整税额，也不按零处理。'));
-      host.appendChild(card);
-      return;
-    }
-    var f = p.tax;
-    function numField(label, key) {
-      var lab = h('label', { class: 'f' }, label);
-      var inp = h('input', { type: 'number', step: 'any', min: '0', value: f[key] === '' || f[key] === null || f[key] === undefined ? '' : String(f[key]) });
-      inp.addEventListener('change', function () { f[key] = inp.value; touch(); recomputeTax(result); });
-      lab.appendChild(inp);
-      return lab;
-    }
-    function selField(label, key, opts) {
-      var lab = h('label', { class: 'f' }, label);
-      var s = h('select', {});
-      opts.forEach(function (o) { s.appendChild(h('option', { value: o[0] }, o[1])); });
-      s.value = f[key] === true ? 'true' : (f[key] || '');
-      s.addEventListener('change', function () { f[key] = s.value; touch(); recomputeTax(result); });
-      lab.appendChild(s);
-      return lab;
-    }
-    var currencyOpts = market === 'SG' ? [['SGD', 'SGD 新加坡元'], ['CNY', 'CNY 人民币'], ['USD', 'USD 美元']] : [['AUD', 'AUD 澳元'], ['CNY', 'CNY 人民币'], ['USD', 'USD 美元']];
-    var fields = h('div', {});
-    fields.appendChild(h('div', { class: 'fields' },
-      numField('货值（' + (f.currency || '计价币种') + '）', 'goodsValue'),
-      selField('币种', 'currency', currencyOpts),
-      numField('国际运费', 'freight'),
-      numField('国际保险费', 'insurance'),
-      numField('数量（台/套）', 'quantity'),
-      selField('贸易术语', 'incoterm', [['FOB', 'FOB（不含国际运保）'], ['CIF', 'CIF（已含国际运保）'], ['DDP', 'DDP（到门含税总价）'], ['other', '其他/未确定']]),
-      selField('原产地', 'origin', [['CN', '中国 CN'], ['other', '其他国家/未确认']]),
-      selField('特殊估价', 'specialValuation', [['no', '否——按常规估价'], ['yes', '是'], ['unknown', '不确定']])
-    ));
-    if (f.currency && f.currency !== (market === 'SG' ? 'SGD' : 'AUD')) {
+    /* B. 税费计算器（SG/AU）或变量计算式模板（其他市场） */
+    var opts = D.formOptions || {};
+    if (market === 'SG' || market === 'AU') {
+      var card = h('div', { class: 'card' });
+      card.appendChild(h('h3', {}, '税费阶段测算（' + (market === 'SG' ? '新加坡' : '澳大利亚') + '：按已核公式实时复算）'));
+      var f = p.tax;
+      var native = market === 'SG' ? 'SGD' : 'AUD';
+      function numField(label, key) {
+        var lab = h('label', { class: 'f' }, label);
+        var inp = h('input', { type: 'number', step: 'any', min: '0', value: f[key] === '' || f[key] === null || f[key] === undefined ? '' : String(f[key]) });
+        inp.addEventListener('change', function () { f[key] = inp.value; touch(); recomputeTax(result); });
+        lab.appendChild(inp);
+        return lab;
+      }
+      function selField(label, key, optList, note) {
+        var lab = h('label', { class: 'f' }, label);
+        var s = h('select', {});
+        optList.forEach(function (o) { s.appendChild(h('option', { value: o[0] }, o[1])); });
+        s.value = f[key] === true ? 'true' : (f[key] || '');
+        s.addEventListener('change', function () { f[key] = s.value; touch(); recomputeTax(result); });
+        lab.appendChild(s);
+        if (note) lab.appendChild(h('span', { class: 'subhint' }, note));
+        return lab;
+      }
+      var incoterms = (opts.incoterms || []).map(function (o) { return [o.value, o.label]; });
+      if (!incoterms.length) incoterms = [['FOB', 'FOB'], ['CIF', 'CIF'], ['DDP', 'DDP'], ['other', '其他']];
+      var currencies = (opts.currencies || []).map(function (o) { return [o.value, o.label]; });
+      if (!currencies.length) currencies = [[native, native]];
+      if (!currencies.some(function (c) { return c[0] === f.currency; })) f.currency = native;
+      var origins = (opts.origins || []).map(function (o) { return [o.value, o.label]; });
+      if (!origins.length) origins = [['CN', '中国 CN'], ['other', '其他/未确认']];
+      var fields = h('div', {});
       fields.appendChild(h('div', { class: 'fields' },
-        numField('汇率（1 外币 = ? ' + (market === 'SG' ? 'SGD' : 'AUD') + '）', 'fxRate'),
-        h('label', { class: 'f' }, '汇率来源及日期', (function () {
-          var inp = h('input', { type: 'text', value: f.fxSource || '', placeholder: '例如：中国人民银行 2026-11-04 中间价' });
-          inp.addEventListener('change', function () { f.fxSource = inp.value; touch(); recomputeTax(result); });
-          return inp;
-        })())
+        numField('货值（' + (f.currency || native) + '）', 'goodsValue'),
+        selField('计价币种', 'currency', currencies, '非' + native + '计价需法定汇率记录'),
+        numField('国际运费', 'freight'),
+        numField('国际保险费', 'insurance'),
+        numField('数量（台/套）', 'quantity'),
+        selField('贸易术语', 'incoterm', incoterms, '承担划分见下方矩阵；EXW/FCA 等按另加运保路径核税基'),
+        selField('原产地', 'origin', origins),
+        selField('特殊估价（需专业结论）', 'specialValuation', [['no', '否——按常规估价'], ['yes', '是'], ['unknown', '不确定']])
       ));
-    }
-    if (f.incoterm === 'DDP') {
-      fields.appendChild(h('div', { class: 'banner warn' }, 'DDP 含税总价不能倒算税基：需提供经专业确认的海关价值与费用拆分。合同费用承担（DDP 由卖方承担）与法定税率是两回事。'));
-      fields.appendChild(h('div', { class: 'fields' },
-        numField('经专业确认的海关价值', 'confirmedCustomsValue'),
-        selField('是否经专业确认', 'valuationConfirmed', [['', '未确认'], ['true', '已确认']])
-      ));
-    }
-    if (market === 'SG') {
-      fields.appendChild(h('div', { class: 'fields' },
-        selField('进口路线', 'importRoute', [['bulk', '普通批量进口'], ['low_value', '低值路线'], ['postal', '空邮/邮寄']]),
-        selField('进口前多次销售', 'multipleSales', [['', '否'], ['true', '是']]),
-        numField('最后买方申报价（如多次销售）', 'lsp')
-      ));
-    }
-    if (market === 'AU') {
-      fields.appendChild(h('div', { class: 'fields' },
-        numField('海关价值 CV（经确认，AUD）', 'customsValueConfirmed'),
-        selField('运输方式（生物安全费需要）', 'transport', [['sea', '海运'], ['air', '空运']]),
-        selField('销售州（电气安全提示用）', 'salesState', [['VIC', '维州 VIC'], ['other', '其他州/未指定']]),
-        selField('ChAFTA 优惠情景', 'originPreference', [['none', '不申请优惠'], ['conditional', '拟申请——条件未复核'], ['reviewed', '已复核——需三项声明']])
-      ));
-      if (f.originPreference === 'reviewed') {
+      if (f.currency && f.currency !== native) {
         fields.appendChild(h('div', { class: 'fields' },
-          selField('PSR 已满足', 'psrSatisfied', [['', '未确认'], ['true', '已满足'], ['unknown', '不确定']]),
-          selField('原产证明有效', 'docsValid', [['', '未确认'], ['true', '有效']]),
-          selField('运输条件满足', 'transportCond', [['', '未确认'], ['true', '满足']])
+          numField('汇率（1 外币 = ? ' + native + '）', 'fxRate'),
+          h('label', { class: 'f' }, '汇率来源及日期（法定汇率记录）', (function () {
+            var inp = h('input', { type: 'text', value: f.fxSource || '', placeholder: '例如：MAS 当周均价 / 央行中间价及日期' });
+            inp.addEventListener('change', function () { f.fxSource = inp.value; touch(); recomputeTax(result); });
+            return inp;
+          })())
         ));
       }
+      if (f.incoterm === 'DDP') {
+        fields.appendChild(h('div', { class: 'banner warn' }, 'DDP 含税总价不能倒算税基：需提供经专业确认的海关价值与费用拆分。合同费用承担与法定税率是两回事。'));
+        fields.appendChild(h('div', { class: 'fields' },
+          numField('经专业确认的海关价值', 'confirmedCustomsValue'),
+          selField('是否经专业确认', 'valuationConfirmed', [['', '未确认'], ['true', '已确认']])
+        ));
+      }
+      if (market === 'SG') {
+        var routes = (opts.importRoutes || []).map(function (o) { return [o.value, o.label]; });
+        if (!routes.some(function (r) { return r[0] === 'bulk'; })) routes = [['bulk', '一般贸易批量进口'], ['low_value', '低值路线'], ['postal', '空邮/邮寄']];
+        fields.appendChild(h('div', { class: 'fields' },
+          selField('进口路线', 'importRoute', routes),
+          selField('进口前多次销售', 'multipleSales', [['', '否'], ['true', '是——需最后买方申报价']]),
+          numField('最后买方申报价（如多次销售）', 'lsp')
+        ));
+      }
+      if (market === 'AU') {
+        var modes = (opts.transportModes || []).map(function (o) { return [o.value, o.label]; });
+        if (!modes.some(function (m) { return m[0] === 'sea'; })) modes = [['sea', '海运'], ['air', '空运']];
+        fields.appendChild(h('div', { class: 'fields' },
+          numField('海关价值 CV（经确认，AUD）', 'customsValueConfirmed'),
+          selField('运输方式（生物安全费按空/海区分）', 'transport', modes, '非空运/海运时生物安全费阻断并说明'),
+          selField('销售州（电气安全提示用）', 'salesState', [['VIC', '维州 VIC'], ['other', '其他州/未指定']]),
+          selField('ChAFTA 优惠情景', 'originPreference', [['none', '不申请优惠'], ['conditional', '拟申请——条件未复核'], ['reviewed', '已复核——需三项声明']])
+        ));
+        if (f.originPreference === 'reviewed') {
+          fields.appendChild(h('div', { class: 'banner warn' }, 'ChAFTA 零关税需「PSR 满足 + 原产证明有效 + 运输条件满足」同时成立；数据包未运行 HS 特定 PSR 自动判断，以下声明由用户负责并留痕。'));
+          fields.appendChild(h('div', { class: 'fields' },
+            selField('PSR 已满足', 'psrSatisfied', [['', '未确认'], ['true', '已满足'], ['unknown', '不确定']]),
+            selField('原产证明有效', 'docsValid', [['', '未确认'], ['true', '有效']]),
+            selField('运输条件满足（直接运输）', 'transportCond', [['', '未确认'], ['true', '满足']])
+          ));
+        }
+      }
+      fields.appendChild(h('div', { class: 'fields' },
+        selField('贸易救济/附加措施核查', 'remedyCheck', [['', '尚未核查'], ['confirmed_clear', '已核查：无适用措施'], ['measures_found', '发现适用措施——需另行计入']])
+      ));
+      card.appendChild(fields);
+      var result = h('div', {});
+      card.appendChild(result);
+      host.appendChild(card);
+      recomputeTax(result);
+    } else {
+      var tpl = (D.taxTemplates || []).find(function (t) { return t.market === market; });
+      var tc = h('div', { class: 'card' });
+      tc.appendChild(h('h3', {}, '税费计算式（' + (JUR[market] ? JUR[market].name : market) + '）'));
+      if (tpl) {
+        tc.appendChild(h('div', { class: 'banner warn' }, '该市场暂无可复算的税费画像。以下为研究保留的变量计算式：税率未核实前不代入数值，不按零处理。'));
+        tc.appendChild(h('p', { class: 'subhint' }, tpl.label + '｜' + tpl.scenario));
+        var ul = h('ul', { style: 'margin:6px 0 10px 20px;font-size:13.5px' });
+        tpl.lines.forEach(function (ln) { ul.appendChild(h('li', {}, ln)); });
+        tc.appendChild(ul);
+        tc.appendChild(h('h4', { style: 'font-size:14px;margin:10px 0 4px' }, '代入数值前必须确认'));
+        tpl.mustConfirm.forEach(function (m) { tc.appendChild(h('div', { style: 'font-size:13px;margin:3px 0' }, '· ' + m)); });
+        tc.appendChild(h('div', { style: 'margin-top:6px' }, '依据：', (function () {
+          var sw = h('span', {});
+          tpl.sources.forEach(function (s) { sw.appendChild(h('a', { href: s.url, target: '_blank', rel: 'noopener noreferrer', style: 'margin-right:8px' }, s.label)); });
+          return sw;
+        })()));
+        tc.appendChild(h('p', { class: 'subhint' }, tpl.note));
+      } else {
+        tc.appendChild(h('div', { class: 'banner bad' }, '当前目的地（' + (JUR[market] ? JUR[market].name : market) + '）既无可复算税费画像，也无可展示的变量计算式模板：不输出任何金额结论。可在下方知识库查看通用税种与公式。'));
+      }
+      host.appendChild(tc);
     }
-    fields.appendChild(h('div', { class: 'fields' },
-      selField('贸易救济/附加措施核查', 'remedyCheck', [['', '尚未核查'], ['confirmed_clear', '已核查：无适用措施'], ['measures_found', '发现适用措施']])
-    ));
-    card.appendChild(fields);
-    var result = h('div', {});
-    card.appendChild(result);
-    host.appendChild(card);
-    recomputeTax(result);
+
+    /* C. 税则知识库 */
+    var kb = h('div', { class: 'card' });
+    kb.appendChild(h('h3', {}, '税则知识库（已核一般规则与公式）'));
+    kb.appendChild(h('p', { class: 'subhint' }, '来源：正式交付「税率税种与公式」表；“已核一般规则”不等于本票交易适用；缺失项一律不按 0 补齐。'));
+    var rows = (D.taxRules || []).filter(function (r) { return r.market === market || r.market === 'ALL'; });
+    if (!rows.length) kb.appendChild(h('p', { class: 'subhint' }, '该市场暂无税种公式记录（缺口）。'));
+    else {
+      var kt = h('table', { class: 't' });
+      kt.appendChild(h('thead', {}, h('tr', {}, h('th', {}, '税种/项目'), h('th', {}, '类别'), h('th', { class: 'num' }, '税率/金额'), h('th', {}, '税基'), h('th', {}, '公式'), h('th', {}, '适用前提'), h('th', {}, '状态与缺失处理'), h('th', {}, '依据'))));
+      var kbBody = h('tbody', {});
+      rows.forEach(function (r) {
+        var rateTxt = r.rate === null ? '待核' : (r.rateUnit === '比例' ? (r.rate * 100).toFixed(r.rate * 100 % 1 === 0 ? 0 : 1) + '%' : r.rate + '（' + r.rateUnit + '）');
+        kbBody.appendChild(h('tr', {},
+          h('td', {}, h('b', {}, r.type), h('div', { class: 'subhint' }, r.id)),
+          h('td', {}, r.classification || '—'),
+          h('td', { class: 'num' }, rateTxt),
+          h('td', {}, r.base || '—'),
+          h('td', {}, h('code', { class: 'inline' }, r.formula || '—')),
+          h('td', {}, r.conditions || '—'),
+          h('td', {}, (r.status || '') + '；' + (r.missingBehavior || '')),
+          h('td', {}, (r.locator ? h('div', { class: 'subhint' }, r.locator) : h('span', {})), sourceLinks(r.sourceIds))));
+      });
+      kt.appendChild(kbBody);
+      kb.appendChild(h('div', { class: 'tbl-wrap' }, kt));
+    }
+    host.appendChild(kb);
+
+    /* D. 贸易术语承担矩阵 */
+    var im = h('div', { class: 'card' });
+    im.appendChild(h('h3', {}, '贸易术语与费用承担矩阵'));
+    im.appendChild(h('p', { class: 'subhint' }, '合同费用承担 ≠ 法定税率：Incoterms 决定谁付钱，不改变税基构成与法定税率；估价仍按目的国规则。'));
+    var it = h('table', { class: 't' });
+    it.appendChild(h('thead', {}, h('tr', {}, h('th', {}, '术语'), h('th', {}, '适用运输'), h('th', {}, '卖方承担'), h('th', {}, '买方承担'), h('th', {}, '税率影响'), h('th', {}, '税基/估价注意'), h('th', {}, '依据'))));
+    var ib = h('tbody', {});
+    (D.incotermMatrix || []).forEach(function (r) {
+      ib.appendChild(h('tr', {}, h('td', {}, h('b', {}, r.term)), h('td', {}, r.mode), h('td', {}, r.seller), h('td', {}, r.buyer),
+        h('td', {}, r.dutyRateEffect), h('td', {}, r.valuation), h('td', {}, sourceLinks(r.sourceIds))));
+    });
+    it.appendChild(ib);
+    im.appendChild(h('div', { class: 'tbl-wrap' }, it));
+    host.appendChild(im);
+
+    /* E. 易漏项提示 */
+    var feeNote = h('div', { class: 'card' });
+    feeNote.appendChild(h('h3', {}, '容易漏项：行政收费、抵扣与贸易救济'));
+    feeNote.appendChild(h('p', { class: 'subhint' }, '· SG 新品注册费 SGD 180/新型号、CoC 续期 SGD 50/次（TX-SG-REG/TX-SG-REN）：属合规行政收费，不计入每票进口税，但要进成本测算。'));
+    feeNote.appendChild(h('p', { class: 'subhint' }, '· GST 抵扣/递延（TX-RECOVER）：仅 GST 注册不足以证明全额抵扣，须业务用途、进口主体和凭证；递延须批准。'));
+    feeNote.appendChild(h('p', { class: 'subhint' }, '· 贸易救济/附加措施（TX-REMEDY）：未查到 ≠ 0；SG 需当日复核反倾销登记。'));
+    host.appendChild(feeNote);
   }
+
   function recomputeTax(host) {
     try { renderTaxResult(host, E.calculateTaxes(D, taxInput())); }
     catch (e) { clear(host); host.appendChild(h('div', { class: 'banner bad' }, '计算失败：' + e.message)); }
@@ -1581,6 +1668,11 @@
 
     var s5 = h('div', { class: 'card' });
     s5.appendChild(h('h3', {}, '5. HS 候选与税费阶段测算'));
+    var kbRows = (D.taxRules || []).filter(function (r) { return r.market === p.scenario.market || r.market === 'ALL'; });
+    if (kbRows.length) s5.appendChild(h('p', { class: 'subhint' }, '引用税则知识库条目：' + kbRows.map(function (r) { return r.id; }).join('、') + '（核验基准 ' + (kbRows[0].verifiedAsOf || '—') + '，已核一般规则 ≠ 本票交易适用）。'));
+    var tplUsed = (D.taxTemplates || []).find(function (t) { return t.market === p.scenario.market; });
+    if (tplUsed && !(R.tax.lines && R.tax.lines.length)) s5.appendChild(h('p', { class: 'subhint' }, '该市场按研究变量计算式模板展示：' + tplUsed.label + '；税率未核实不代入数值。'));
+
     if (p.hsChoice) {
       var c = D.hsCandidates.find(function (x) { return x.id === p.hsChoice; });
       if (c) s5.appendChild(h('p', {}, '选定 HS 候选：', h('b', {}, c.code), '（候选方向，非海关最终归类；复核状态：' + (c.review || '—') + '）'));

@@ -102,7 +102,10 @@ console.log('== 5. HS 与税费 ==');
 goto('tax');
 let taxText = txt('taxBody');
 check('德国无 HS 候选 → 明确缺口', taxText.includes('尚无经来源关联的目的国 HS 候选'));
-check('德国税费不可用说明', taxText.includes('仅对新加坡（SG）与澳大利亚（AU）'));
+check('德国显示变量计算式模板', taxText.includes('变量计算式') && taxText.includes('(20,500 + 20,000 × d) × v'), taxText.slice(0,150));
+check('德国模板含 TARIC/EBTI 依据', taxText.includes('TARIC') && taxText.includes('EBTI'));
+check('税则知识库出现', taxText.includes('税则知识库'));
+check('贸易术语承担矩阵出现', taxText.includes('贸易术语与费用承担矩阵') && taxText.includes('合同费用承担 ≠ 法定税率'));
 window.__VO_TEST__.mutate(function (p) {
   p.scenario.market = 'SG';
   p.scenario.subcategoryId = 'K-BEV-001';
@@ -127,6 +130,22 @@ check('实时计算：税基 21,600.00', taxText.includes('21,600.00'), taxText.
 check('进口 GST 9% 出现', taxText.includes('进口 GST'));
 check('贸易救济未核查 → 完整总额不可用', taxText.includes('不可用') && taxText.includes('贸易救济'));
 check('指示性操作费标注', taxText.includes('指示性'));
+check('SG 知识库含 GST 公式行', taxText.includes('GST=(B+D)*0.09'), '');
+check('SG 知识库含贸易救济未核提示', taxText.includes('TX-REMEDY') && taxText.includes('未查到当0'));
+// 电吹风 SG：扩展包 HS 候选（851631）应出现
+window.__VO_TEST__.mutate(function (p) { p.scenario.subcategoryId = 'P-HAIR-001'; p.scenario.facts = { household: true, end_use: 'consumer' }; p.scenario.factsUnknown = {}; p.hsChoice = ''; });
+goto('tax');
+const dryText = txt('taxBody');
+check('电吹风 SG 出现扩展包 HS 候选 851631', dryText.includes('851631'), dryText.slice(0, 120));
+// 马来西亚：SST 变量式
+window.__VO_TEST__.mutate(function (p) { p.scenario.market = 'MY'; });
+goto('tax');
+const myText = txt('taxBody');
+check('马来西亚显示 SST 变量计算式', myText.includes('关税 = 20,000 × d') && myText.includes('进口销售税'), myText.slice(0, 120));
+check('马来西亚模板含销售税法依据', myText.includes('Sales Tax Act'));
+// 恢复 SG 水壶场景供后续断言
+window.__VO_TEST__.mutate(function (p) { p.scenario.market = 'SG'; p.scenario.subcategoryId = 'K-BEV-001'; });
+goto('qianwen');
 
 console.log('== 6. 新闻雷达 ==');
 goto('news');
