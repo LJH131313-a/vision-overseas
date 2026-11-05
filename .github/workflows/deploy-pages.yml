@@ -1,51 +1,51 @@
 name: 部署网站到 GitHub Pages
-
-# 说明：站点默认通过 Settings → Pages 的 "Deploy from a branch: main / (root)" 发布，
-# 推送 main 后 1–3 分钟自动更新，无需运行本工作流。
-# 本工作流保留为手动触发（Actions 页 → Run workflow）：
-# 用作 Actions 部署方式（需先把 Pages Source 设为 GitHub Actions）或顺便验证新闻采集。
 on:
+  push:
+    branches: [main]
   workflow_dispatch:
-
+  workflow_run:
+    workflows: ['更新新闻快照']
+    types: [completed]
 permissions:
   contents: read
   pages: write
   id-token: write
-
 concurrency:
-  group: pages-deploy
-  cancel-in-progress: true
-
+  group: pages
+  cancel-in-progress: false
 jobs:
   deploy:
+    if: github.event_name != 'workflow_run' || (github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.head_branch == 'main')
     runs-on: ubuntu-latest
     timeout-minutes: 15
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
-      - name: 检出仓库
+      - name: 检出最新发布分支
         uses: actions/checkout@v4
-
-      - name: 安装 Python
-        uses: actions/setup-python@v5
         with:
-          python-version: '3.12'
-
-      - name: 采集最新新闻（失败时保留快照，不阻断部署）
-        run: python tools/collect_news.py
-        continue-on-error: true
-
-      - name: 配置并启用 GitHub Pages
+          ref: main
+      - name: 设置 Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: 验证规则与静态资源
+        run: |
+          node tests/engine.test.mjs
+          node tests/static-assets.test.mjs
+      - name: 配置 GitHub Pages
         uses: actions/configure-pages@v5
-        with:
-          enablement: true
-
+      - name: 准备公开网站文件
+        run: |
+          mkdir -p _site
+          cp index.html favicon.svg _site/
+          cp -R css js data _site/
+          touch _site/.nojekyll
       - name: 上传网站文件
         uses: actions/upload-pages-artifact@v3
         with:
-          path: '.'
-
+          path: _site
       - name: 部署到 GitHub Pages
         id: deployment
         uses: actions/deploy-pages@v4
