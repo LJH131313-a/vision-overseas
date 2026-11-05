@@ -171,6 +171,51 @@ check('数据说明包含覆盖等级', document.getElementById('aboutBody').tex
 check('数据说明包含缺口', document.getElementById('aboutBody').textContent.includes('未完成事项与缺口'), '');
 check('数据说明包含新闻边界', document.getElementById('aboutBody').textContent.includes('不是实时监控'), '');
 
+console.log('== 9. 千问 API 直连（自带密钥） ==');
+clickByText('#tabs button', '千问辅助建议');
+const qwText = document.getElementById('qianwenBody').textContent;
+check('API 设置卡渲染（方式一）', qwText.includes('方式一：调用千问 API 在线分析'), '');
+check('手动闭环保留（方式二）', qwText.includes('方式二：手动闭环'), '');
+check('密钥说明出现（仅存本机）', qwText.includes('密钥只保存在本机浏览器'), '');
+// 请求构造
+window.__VO_TEST__.setApiSettings({ region: 'cn', model: 'qwen-plus', customModel: '', apiKey: 'sk-test-abc', apiBase: '' });
+let req = window.__VO_TEST__.buildApiRequest('测试任务文本');
+check('大陆端点 URL 正确', req.url === 'https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions', req.url);
+check('鉴权头携带密钥', req.init.headers.Authorization === 'Bearer sk-test-abc', '');
+const bodyObj = JSON.parse(req.init.body);
+check('请求体含 system+user 两条消息', bodyObj.messages.length === 2 && bodyObj.messages[0].role === 'system' && bodyObj.messages[1].content === '测试任务文本', '');
+check('模型与流式参数', bodyObj.model === 'qwen-plus' && bodyObj.stream === false, '');
+window.__VO_TEST__.setApiSettings({ region: 'intl' });
+check('国际端点 URL 正确', window.__VO_TEST__.buildApiRequest('x').url === 'https://dashscope-intl.aliyuncs.com/compatible-mode/v1/chat/completions', '');
+window.__VO_TEST__.setApiSettings({ region: 'cn', apiBase: 'https://my-proxy.example.com/v1' });
+check('自定义代理地址生效', window.__VO_TEST__.buildApiRequest('x').url === 'https://my-proxy.example.com/v1/chat/completions', '');
+window.__VO_TEST__.setApiSettings({ apiBase: '', region: 'cn' });
+check('响应解析成功', window.__VO_TEST__.parseApiResponse({ model: 'qwen-mock', choices: [{ message: { content: '分析结果' } }] }).ok === true, '');
+check('响应解析失败（空 choices）', window.__VO_TEST__.parseApiResponse({ choices: [] }).ok === false, '');
+// 未填密钥时点击调用 → 失败提示
+window.__VO_TEST__.setApiSettings({ apiKey: '' });
+clickByText('#qianwenBody button', '调用千问 API 生成建议');
+await new Promise((r) => setTimeout(r, 50));
+check('未填密钥有明确失败提示', document.getElementById('toastWrap').textContent.includes('请先在上方填写并保存 API Key'), '');
+// mock 成功调用
+const beforeCount = window.__VO_TEST__.current().qianwen.responses.length;
+window.fetch = function (url, opts) {
+  return Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve({ model: 'qwen-mock', choices: [{ message: { content: '【模拟千问回复】已知事实……' } }] }) });
+};
+window.__VO_TEST__.setApiSettings({ apiKey: 'sk-test-abc' });
+clickByText('#qianwenBody button', '调用千问 API 生成建议');
+await new Promise((r) => setTimeout(r, 300));
+const afterSave = window.__VO_TEST__.current().qianwen.responses;
+check('API 回复自动保存', afterSave.length === beforeCount + 1 && afterSave[0].via === 'api', 'count=' + afterSave.length);
+check('回复标记模型名', afterSave[0].model === 'qwen-mock' && document.getElementById('qianwenBody').textContent.includes('API 调用 · qwen-mock'), '');
+// mock 401 失败（成功后视图已重渲染，按钮文字恢复为初始文案）
+window.fetch = function () { return Promise.resolve({ ok: false, status: 401, json: () => Promise.resolve({ message: 'Invalid API-key' }) }); };
+clickByText('#qianwenBody button', '调用千问 API 生成建议');
+await new Promise((r) => setTimeout(r, 300));
+check('401 失败有具体提示', document.getElementById('toastWrap').textContent.includes('API Key 无效或未授权'), '');
+check('失败不新增回复', window.__VO_TEST__.current().qianwen.responses.length === beforeCount + 1, '');
+delete window.fetch;
+
 console.log(`\n===== DOM 冒烟测试：${pass + fail} 项断言，通过 ${pass}，失败 ${fail} =====`);
 if (failures.length) { console.log('失败：', failures.join('；')); process.exit(1); }
 console.log('全部通过 ✔');

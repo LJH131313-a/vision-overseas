@@ -116,6 +116,9 @@
   /* ================= 状态与保存 ================= */
   var LS_KEY = 'vo-workbench-v2';
   var state = null;
+  function defaultSettings() {
+    return { region: 'cn', model: 'qwen-plus', customModel: '', apiKey: '', apiBase: '' };
+  }
   function defaultProject(name) {
     var now = new Date().toISOString();
     return {
@@ -138,10 +141,11 @@
       if (raw) { state = JSON.parse(raw); if (!state.projects || !state.projects.length) throw new Error('empty'); }
       else throw new Error('empty');
     } catch (e) {
-      state = { v: 2, projects: [defaultProject('示例项目')], currentId: null };
+      state = { v: 2, projects: [defaultProject('示例项目')], currentId: null, settings: defaultSettings() };
       state.currentId = state.projects[0].id;
       persist(false);
     }
+    if (!state.settings) state.settings = defaultSettings();
     if (!state.currentId || !state.projects.some(function (p) { return p.id === state.currentId; })) {
       state.currentId = state.projects[0].id;
     }
@@ -1191,15 +1195,235 @@
     lines.push('约束：不要虚构认证状态、进口商、税率或生效日期；未知税率与贸易救济不得按零处理；对覆盖不足的产品与市场组合明确说明缺口。');
     return lines.join('\n');
   }
+  /* ---------- 千问 API 直连（用户自带密钥，仅存本机浏览器） ---------- */
+  var API_SYSTEM_PROMPT = '你是一名面向中国企业小家电出海业务的合规与供应链顾问。请严格按用户任务中「要求的输出结构」作答，使用中文；每条结论附引用依据（法规编号/条款/官方链接）；对缺失信息明确列为待补资料，不得假设企业已取得认证、已确定进口商或已满足准入条件；未知税率与贸易救济不得按零处理；覆盖不足的产品与市场组合要明确说明缺口。';
+  function apiSettings() { return state.settings; }
+  function activeModel() {
+    var st = state.settings;
+    return (st.customModel || '').trim() || st.model || 'qwen-plus';
+  }
+  function apiEndpoint(region, base) {
+    if (base && base.trim()) return base.trim().replace(/\/+$/, '') + '/chat/completions';
+    return region === 'intl'
+      ? 'https://dashscope-intl.aliyuncs.com/compatible-mode/v1/chat/completions'
+      : 'https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions';
+  }
+  function buildApiRequest(task) {
+    var st = state.settings;
+    return {
+      url: apiEndpoint(st.region, st.apiBase),
+      init: {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + st.apiKey },
+        body: JSON.stringify({
+          model: activeModel(),
+          temperature: 0.2,
+          stream: false,
+          messages: [
+            { role: 'system', content: API_SYSTEM_PROMPT },
+            { role: 'user', content: task }
+          ]
+        })
+      }
+    };
+  }
+  function parseApiResponse(data) {
+    if (data && Array.isArray(data.choices) && data.choices.length && data.choices[0].message && typeof data.choices[0].message.content === 'string') {
+      return { ok: true, text: data.choices[0].message.content, model: data.model || data.choices[0].model || '' };
+    }
+    var msg = (data && (data.message || (data.error && data.error.message))) || '响应格式异常（未找到回复内容）';
+    return { ok: false, error: msg };
+  }
+  var apiAbort = null;
+  function callQianwenApi(task, cb) {
+    var st = state.settings;
+    if (!st.apiKey) { cb({ ok: false, error: '尚未填写 API Key：请先在上方填写并保存（密钥仅存本机浏览器）。' }); return; }
+    var req = buildApiRequest(task);
+    apiAbort = (typeof AbortController !== 'undefined') ? new AbortController() : null;
+    var timer = setTimeout(function () { if (apiAbort) apiAbort.abort(); }, 180000);
+    var startedAt = Date.now();
+    var opts = req.init;
+    if (apiAbort) opts.signal = apiAbort.signal;
+    fetch(req.url, opts).then(function (res) {
+      clearTimeout(timer);
+      return res.json().catch(function () { return {}; }).then(function (data) {
+        if (!res.ok) {
+          var detail = (data && (data.message || (data.error && data.error.message))) || '';
+          var msg;
+          if (res.status === 401) msg = 'API Key 无效或未授权。' + detail;
+          else if (res.status === 403) msg = '无权访问该模型或资源。' + detail;
+          else if (res.status === 404) msg = '模型名或接口地址不存在。' + detail;
+          else if (res.status === 429) msg = '请求限流，请稍后重试。' + detail;
+          else msg = 'HTTP ' + res.status + '：' + (detail || '服务端错误');
+          cb({ ok: false, error: msg });
+          return;
+        }
+        var parsed = parseApiResponse(data);
+        if (!parsed.ok) { cb({ ok: false, error: parsed.error }); return; }
+        cb({ ok: true, text: parsed.text, model: parsed.model || activeModel(), elapsed: Date.now() - startedAt });
+      });
+    }).catch(function (err) {
+      clearTimeout(timer);
+      var msg = (err && err.name === 'AbortError') ? '已取消或请求超时（180 秒）。'
+        : '网络或跨域请求失败：' + ((err && err.message) || '未知错误') + '。若为网络限制，可在设置中改用国际站端点或自建代理地址；也可改用下方手动闭环。';
+      cb({ ok: false, error: msg });
+    });
+  }
+  function saveQianwenResponse(text, extra) {
+    var p = proj();
+    p.qianwen.responses.unshift(Object.assign({
+      id: 'R' + Date.now().toString(36),
+      at: new Date().toISOString(),
+      hash: inputHash(),
+      text: String(text || '')
+    }, extra || {}));
+    if (p.qianwen.responses.length > 20) p.qianwen.responses.pop();
+    touch();
+  }
+  function responseBadge(r) {
+    if (r.via === 'api') return h('span', { class: 'tag brand' }, '千问回复（API 调用' + (r.model ? ' · ' + r.model : '') + '）');
+    return h('span', { class: 'tag brand' }, '千问回复（人工导入）');
+  }
+
+  var apiState = { running: false, started: 0, note: '', err: '' };
+  function renderApiSettings(host) {
+    var st = apiSettings();
+    var card = h('div', { class: 'card' });
+    card.appendChild(h('h3', {}, '方式一：调用千问 API 在线分析（可选，推荐）'));
+    card.appendChild(h('div', { class: 'banner info' }, '直连阿里云百炼（DashScope）OpenAI 兼容接口，无需复制粘贴：任务自动发送，回复自动保存并合并到综合报告。需要你自己的 DashScope API Key（阿里云百炼控制台获取）；密钥只保存在本机浏览器 localStorage，不进入页面代码、仓库或导出文件；调用费用由你的阿里云账户承担，请勿在公共电脑上保存密钥。没有密钥时可使用下方方式二手动闭环。'));
+    var fields = h('div', { class: 'fields' });
+    var regionSel = h('select', {});
+    regionSel.appendChild(h('option', { value: 'cn' }, '中国大陆（dashscope.aliyuncs.com）'));
+    regionSel.appendChild(h('option', { value: 'intl' }, '国际站（dashscope-intl.aliyuncs.com）'));
+    regionSel.value = st.region || 'cn';
+    var modelSel = h('select', {});
+    ['qwen-plus', 'qwen-turbo', 'qwen-max', 'qwen-flash'].forEach(function (m) {
+      modelSel.appendChild(h('option', { value: m }, m + (m === 'qwen-plus' ? '（默认，均衡）' : m === 'qwen-turbo' ? '（最快最省）' : m === 'qwen-max' ? '（能力最强）' : '')));
+    });
+    modelSel.value = st.model || 'qwen-plus';
+    var keyInp = h('input', { type: 'password', placeholder: 'sk-…（仅保存在本机浏览器）', autocomplete: 'off' });
+    keyInp.value = st.apiKey || '';
+    var customInp = h('input', { type: 'text', value: st.customModel || '', placeholder: '留空使用上方模型' });
+    var baseInp = h('input', { type: 'text', value: st.apiBase || '', placeholder: '留空使用官方端点' });
+    fields.appendChild(h('label', { class: 'f' }, '服务区域', regionSel));
+    fields.appendChild(h('label', { class: 'f' }, '模型', modelSel));
+    fields.appendChild(h('label', { class: 'f' }, 'API Key', keyInp));
+    fields.appendChild(h('label', { class: 'f' }, '自定义模型名（可选）', customInp));
+    fields.appendChild(h('label', { class: 'f' }, '自定义接口地址（可选，填代理网关）', baseInp));
+    card.appendChild(fields);
+    var btnRow = h('div', { style: 'display:flex;gap:8px;flex-wrap:wrap;margin:8px 0' });
+    var saveBtn = h('button', { class: 'btn' }, '保存设置到本机');
+    var testBtn = h('button', { class: 'btn sec' }, '测试连通');
+    var clearBtn = h('button', { class: 'btn danger' }, '清除密钥');
+    btnRow.appendChild(saveBtn); btnRow.appendChild(testBtn); btnRow.appendChild(clearBtn);
+    card.appendChild(btnRow);
+    var note = h('div', { class: 'subhint' });
+    function refreshNote() {
+      var s = apiSettings();
+      note.textContent = '当前：' + (s.region === 'intl' ? '国际站' : '中国大陆') + ' · 模型 ' + activeModel() + ' · ' + (s.apiKey ? '已保存密钥（本机）' : '未保存密钥') + (apiState.note ? '；' + apiState.note : '');
+    }
+    refreshNote();
+    card.appendChild(note);
+    function collectInputs() {
+      Object.assign(state.settings, { region: regionSel.value, model: modelSel.value, customModel: customInp.value, apiKey: keyInp.value.trim(), apiBase: baseInp.value.trim() });
+      persist(false);
+    }
+    saveBtn.addEventListener('click', function () {
+      collectInputs();
+      apiState.note = '设置已保存到本机浏览器。';
+      refreshNote();
+      toast('API 设置已保存到本机（密钥不上传）', 'ok');
+    });
+    testBtn.addEventListener('click', function () {
+      collectInputs();
+      if (!state.settings.apiKey) { toast('请先填写 API Key', 'err'); return; }
+      testBtn.disabled = true; testBtn.innerHTML = '';
+      testBtn.appendChild(h('span', { class: 'spin dark' }));
+      testBtn.appendChild(document.createTextNode('测试中…'));
+      callQianwenApi('连通性测试：请只回复两个字符：OK', function (r) {
+        testBtn.disabled = false; testBtn.textContent = '测试连通';
+        if (r.ok) {
+          apiState.note = '连通测试成功：' + r.model + '，耗时 ' + (r.elapsed / 1000).toFixed(1) + ' 秒。';
+          refreshNote();
+          toast('连通测试成功（' + r.model + '）', 'ok');
+        } else {
+          apiState.note = '连通测试失败：' + r.error;
+          refreshNote();
+          toast('测试失败：' + r.error, 'err');
+        }
+      });
+    });
+    clearBtn.addEventListener('click', function () {
+      if (!window.confirm('确定清除保存在本机浏览器的 API Key？')) return;
+      keyInp.value = '';
+      state.settings.apiKey = '';
+      persist(false);
+      apiState.note = '密钥已清除。';
+      refreshNote();
+      toast('密钥已清除', 'ok');
+    });
+    host.appendChild(card);
+  }
+  function renderApiCall(host) {
+    var card = h('div', { class: 'card' });
+    card.appendChild(h('h3', {}, '在线分析（方式一操作台）'));
+    var runBtn = h('button', { class: 'btn' }, '调用千问 API 生成建议');
+    var stopBtn = h('button', { class: 'btn danger', style: 'display:none' }, '取消');
+    var status = h('p', { class: 'subhint' });
+    function refreshStatus() {
+      if (apiState.running) status.textContent = '正在调用千问 API（' + activeModel() + '）…已用时 ' + Math.round((Date.now() - apiState.started) / 1000) + ' 秒，完成后自动保存到下方回复列表。';
+      else status.textContent = apiState.err ? ('上次调用失败：' + apiState.err) : '点击按钮后：自动生成任务 → 发送至千问 API → 回复自动保存（标记为「API 调用」，含模型名与用时）。';
+    }
+    refreshStatus();
+    runBtn.addEventListener('click', function () {
+      if (apiState.running) return;
+      if (!apiSettings().apiKey) { toast('请先在上方填写并保存 API Key', 'err'); return; }
+      if (!proj().scenario.market || !proj().scenario.subcategoryId) { toast('请先在第 2 步完成目的地与产品小类登记', 'err'); return; }
+      var task = buildTaskText();
+      apiState.running = true;
+      apiState.started = Date.now();
+      apiState.err = '';
+      runBtn.disabled = true;
+      runBtn.innerHTML = '';
+      runBtn.appendChild(h('span', { class: 'spin' }));
+      runBtn.appendChild(document.createTextNode('调用中'));
+      stopBtn.style.display = '';
+      var tick = setInterval(refreshStatus, 1000);
+      callQianwenApi(task, function (r) {
+        clearInterval(tick);
+        apiState.running = false;
+        runBtn.disabled = false;
+        runBtn.textContent = '重新调用千问 API';
+        stopBtn.style.display = 'none';
+        if (r.ok) {
+          saveQianwenResponse(r.text, { via: 'api', model: r.model, elapsed: r.elapsed });
+          apiState.err = '';
+          toast('千问回复已保存（API 调用 · ' + r.model + '，' + (r.elapsed / 1000).toFixed(1) + ' 秒）', 'ok');
+          renderQianwen();
+        } else {
+          apiState.err = r.error;
+          refreshStatus();
+          toast('调用失败：' + r.error, 'err');
+        }
+      });
+    });
+    stopBtn.addEventListener('click', function () { if (apiAbort) apiAbort.abort(); });
+    card.appendChild(h('div', { style: 'display:flex;gap:8px;flex-wrap:wrap' }, runBtn, stopBtn));
+    card.appendChild(status);
+    host.appendChild(card);
+  }
   function renderQianwen() {
     var host = $('qianwenBody');
     clear(host);
     var p = proj();
     var cur = inputHash();
 
+    renderApiSettings(host);
+    renderApiCall(host);
+
     var card = h('div', { class: 'card' });
-    card.appendChild(h('h3', {}, '手动闭环：生成分析任务 → 交给千问办公 → 粘贴回复'));
-    card.appendChild(h('div', { class: 'banner info' }, '本模块不调用付费 API，也不在本页面内运行模型：任务由你复制后交给千问办公实际分析，真实回复由你粘贴回本页保存。页面明确区分「规则提示（本地引擎）」与「千问回复（人工导入）」；本页面不会虚构任何千问输出。'));
+    card.appendChild(h('h3', {}, '方式二：手动闭环（无需密钥）'));
+    card.appendChild(h('div', { class: 'banner info' }, '把任务复制后交给千问办公实际分析，真实回复由你粘贴回本页保存。页面明确区分「规则提示（本地引擎）」「千问回复（API 调用）」与「千问回复（人工导入）」；本页面不会虚构任何千问输出。'));
     var genBtn = h('button', { class: 'btn' }, '根据当前项目生成分析任务');
     var ta = h('textarea', { class: 'task', spellcheck: 'false', 'aria-label': '分析任务文本' });
     ta.value = p.qianwen.taskText || '';
@@ -1260,11 +1484,9 @@
     var saveBtn = h('button', { class: 'btn', style: 'margin-top:8px' }, '保存回复到项目');
     saveBtn.addEventListener('click', function () {
       if (!ra.value.trim()) { toast('回复内容为空', 'err'); return; }
-      p.qianwen.responses.unshift({ id: 'R' + Date.now().toString(36), at: new Date().toISOString(), hash: cur, text: ra.value.trim() });
-      if (p.qianwen.responses.length > 20) p.qianwen.responses.pop();
+      saveQianwenResponse(ra.value.trim(), { via: 'manual' });
       ra.value = '';
-      touch();
-      toast('回复已保存（输入指纹 ' + cur + '）', 'ok');
+      toast('回复已保存（输入指纹 ' + inputHash() + '）', 'ok');
       renderQianwen();
     });
     rc.appendChild(ra);
@@ -1274,12 +1496,12 @@
     // 已保存回复
     var lc = h('div', { class: 'card' });
     lc.appendChild(h('h3', {}, '已保存的千问回复（' + p.qianwen.responses.length + '）'));
-    if (!p.qianwen.responses.length) lc.appendChild(h('p', { class: 'subhint' }, '还没有保存的回复。'));
+    if (!p.qianwen.responses.length) lc.appendChild(h('p', { class: 'subhint' }, '还没有保存的回复。可通过方式一在线调用或方式二手动粘贴获得。'));
     p.qianwen.responses.forEach(function (r) {
       var same = r.hash === cur;
       var item = h('div', { class: 'rule-item ' + (same ? 'state-applicable' : 'state-unknown') });
       var head = h('div', { class: 'head' });
-      head.appendChild(h('span', { class: 'tag brand' }, '千问回复（人工导入）'));
+      head.appendChild(responseBadge(r));
       head.appendChild(h('span', { class: 'tag' }, '保存于 ' + fmtDateTime(r.at)));
       head.appendChild(same ? h('span', { class: 'tag ok' }, '与当前输入一致') : h('span', { class: 'tag bad' }, '需要重新分析（输入已变化）'));
       item.appendChild(head);
@@ -1471,13 +1693,13 @@
         var same = r.hash === R.hash;
         s7.appendChild(h('div', { class: 'rule-item ' + (same ? 'state-applicable' : 'state-unknown') },
           h('div', { class: 'head' },
-            h('span', { class: 'tag brand' }, '千问回复（人工导入）'),
+            responseBadge(r),
             h('span', { class: 'tag' }, fmtDateTime(r.at)),
             same ? h('span', { class: 'tag ok' }, '与当前输入一致') : h('span', { class: 'tag bad' }, '需要重新分析（输入已变化）')),
           h('div', { class: 'body', style: 'white-space:pre-wrap;font-size:13.5px' }, r.text)));
       });
     } else {
-      s7.appendChild(h('div', { class: 'banner info' }, '尚无千问回复。请到第 6 步生成分析任务 → 交给千问办公 → 粘贴保存。'));
+      s7.appendChild(h('div', { class: 'banner info' }, '尚无千问回复。可到第 6 步调用千问 API（需自带密钥）或使用手动闭环粘贴保存。'));
     }
     host.appendChild(s7);
 
@@ -1643,6 +1865,11 @@
   window.__VO_TEST__ = {
     current: function () { return proj(); },
     mutate: function (fn) { fn(proj()); touch(); },
-    reloadAll: function () { loadState(); refreshProjSelect(); showTab(currentTab); }
+    reloadAll: function () { loadState(); refreshProjSelect(); showTab(currentTab); },
+    apiSettings: function () { return state.settings; },
+    setApiSettings: function (patch) { Object.assign(state.settings, patch || {}); persist(false); },
+    buildApiRequest: buildApiRequest,
+    parseApiResponse: parseApiResponse,
+    saveQianwenResponse: saveQianwenResponse
   };
 })();
