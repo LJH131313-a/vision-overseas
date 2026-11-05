@@ -1,0 +1,155 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>远见·企业出海助手 | 小家电出海合规工作台</title>
+<meta name="description" content="面向中国小家电出海的企业研究档案、产品登记、法规合规初筛、HS 候选与税费阶段测算、政策新闻雷达、千问辅助建议与综合报告工作台。静态页面，数据快照见页面内说明。">
+<link rel="icon" href="favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="css/styles.css">
+</head>
+<body>
+
+<header class="topbar no-print">
+  <div class="brand">远见 · 企业出海助手<small>小家电出海合规工作台</small></div>
+  <div class="spacer"></div>
+  <div class="proj-pick">
+    <span class="save-hint" id="saveHint">项目保存在本机浏览器</span>
+    <select id="projSelect" aria-label="选择项目"></select>
+    <button class="ghost" id="btnNewProj" type="button">新建项目</button>
+    <button class="ghost" id="btnRenameProj" type="button">重命名</button>
+    <button class="ghost" id="btnDelProj" type="button">删除</button>
+  </div>
+</header>
+
+<nav class="tabs no-print" id="tabs" aria-label="模块导航">
+  <button data-tab="company" class="on"><span class="n">1</span>企业研究档案</button>
+  <button data-tab="product"><span class="n">2</span>产品与市场登记</button>
+  <button data-tab="compliance"><span class="n">3</span>法规与合规初筛</button>
+  <button data-tab="tax"><span class="n">4</span>HS 与税费</button>
+  <button data-tab="news"><span class="n">5</span>政策与新闻雷达</button>
+  <button data-tab="qianwen"><span class="n">6</span>千问辅助建议</button>
+  <button data-tab="report"><span class="n">7</span>综合报告</button>
+  <button data-tab="about"><span class="n">ⓘ</span>数据说明</button>
+</nav>
+
+<main>
+  <!-- 1 企业研究档案 -->
+  <section class="view on" id="view-company" aria-label="企业研究档案">
+    <div class="banner">企业档案来自公开官网、交易所披露文件与主管机关指南（核验日期见各条目）。<b>国内在售型号不能自动当作出口型号</b>；研究路线描述的是市场进入研究，不是已经实现的出口事实。可点击「带入产品登记」把研究参数与待核实项带入第 2 步。</div>
+    <div id="companyList"></div>
+  </section>
+
+  <!-- 2 产品与市场登记 -->
+  <section class="view" id="view-product" aria-label="产品与市场登记">
+    <div class="card">
+      <h3>项目情景</h3>
+      <p class="subhint">同一项目情景贯穿全部模块：修改后，第 3–7 步的结论会按当前输入重新计算；已生成的千问回复与报告快照会标记「需要重新分析」。</p>
+      <div class="fields">
+        <label class="f">项目名称<input id="pName" maxlength="60" placeholder="例如：小熊电饭煲马来西亚项目"></label>
+        <label class="f">企业名称<input id="pCompany" maxlength="60" placeholder="来自企业档案或自行填写"></label>
+        <label class="f">投放市场 / 首次供应日期<input type="date" id="pPlacingDate"></label>
+        <label class="f">进口 / 申报日期（税费用）<input type="date" id="pImportDate"></label>
+        <label class="f">本企业在供应链中的角色
+          <select id="pRole">
+            <option value="">请选择 / 不确定</option>
+            <option value="manufacturer">制造商（中国主体）</option>
+            <option value="importer">进口商</option>
+            <option value="authorised_representative">授权代表</option>
+            <option value="distributor">经销商</option>
+            <option value="marketplace">在线市场平台</option>
+            <option value="seller">卖家</option>
+          </select>
+        </label>
+      </div>
+    </div>
+
+    <div class="card">
+      <h3>目的地与产品小类</h3>
+      <div class="grid2">
+        <div>
+          <label class="f">目的地市场
+            <select id="pMarket"></select>
+          </label>
+          <p class="subhint" id="marketNote"></p>
+        </div>
+        <div>
+          <label class="f">产品大类<select id="pCategory"></select></label>
+          <label class="f">产品组<select id="pGroup" disabled></select></label>
+          <label class="f">叶子小类（决定动态问题与规则路由）<select id="pSub" disabled></select></label>
+          <p class="subhint" id="subNote"></p>
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <h3>经营与渠道事实</h3>
+      <p class="subhint">这些事实决定法规是否进入候选；不确定时选「不确定」，对应判断会显示为待确认而不是不适用。</p>
+      <div id="bizFacts" class="fields"></div>
+    </div>
+
+    <div class="card">
+      <h3>产品技术事实（按小类动态生成）</h3>
+      <p class="subhint" id="dynIntro">选定叶子小类后显示对应问题。</p>
+      <div id="dynFacts"></div>
+    </div>
+
+    <div class="banner info" id="registerSummary"></div>
+    <div class="no-print">
+      <button class="btn" id="btnGoCompliance" type="button">进入第 3 步：法规与合规初筛 →</button>
+    </div>
+  </section>
+
+  <!-- 3 法规与合规初筛 -->
+  <section class="view" id="view-compliance" aria-label="法规与合规初筛">
+    <div class="no-print">
+      <button class="btn" id="btnRunCompliance" type="button">运行条件初筛</button>
+      <span class="subhint" id="complianceRunInfo" style="margin-left:10px"></span>
+    </div>
+    <div id="complianceResult"></div>
+  </section>
+
+  <!-- 4 HS 与税费 -->
+  <section class="view" id="view-tax" aria-label="HS 与税费">
+    <div id="taxBody"></div>
+  </section>
+
+  <!-- 5 政策与新闻雷达 -->
+  <section class="view" id="view-news" aria-label="政策与新闻雷达">
+    <div id="newsBody"></div>
+  </section>
+
+  <!-- 6 千问辅助建议 -->
+  <section class="view" id="view-qianwen" aria-label="千问辅助建议">
+    <div id="qianwenBody"></div>
+  </section>
+
+  <!-- 7 综合报告 -->
+  <section class="view" id="view-report" aria-label="综合报告">
+    <div class="no-print" style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px">
+      <button class="btn" id="btnPrint" type="button">打印 / 导出 PDF</button>
+      <button class="btn sec" id="btnExportJson" type="button">导出项目 JSON</button>
+      <button class="btn sec" id="btnSaveSnapshot" type="button">保存报告快照</button>
+      <span class="subhint" id="reportHint"></span>
+    </div>
+    <div id="reportBody"></div>
+  </section>
+
+  <!-- 数据说明 -->
+  <section class="view" id="view-about" aria-label="数据说明">
+    <div id="aboutBody"></div>
+  </section>
+</main>
+
+<footer class="footer">
+  远见·企业出海助手（静态版）。本工具用于合规准备与资料组织：规则匹配、HS 候选、税费分项均不构成正式合规、认证、法律、税务、原产资格或海关归类结论；关键条件不完整时完整结论保持为空。数据快照与覆盖范围见「数据说明」。
+</footer>
+
+<div class="toast-wrap" id="toastWrap" aria-live="polite"></div>
+
+<script src="data/vo-data.js"></script>
+<script src="data/news.js"></script>
+<script src="js/engine.js"></script>
+<script src="js/app.js"></script>
+</body>
+</html>
