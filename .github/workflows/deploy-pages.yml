@@ -1,6 +1,8 @@
 name: 部署网站到 GitHub Pages
 
-# 推送到 main 或手动运行时：启用并部署 GitHub Pages，同时执行一次新闻采集（验证云端管线）
+# 推送到 main 或手动运行时：部署 GitHub Pages，同时执行一次新闻采集（验证云端管线）
+# 说明：GITHUB_TOKEN 不支持 administration 权限；若仓库尚未启用 Pages，
+# 请先在 Settings → Pages 将 Source 设为 "GitHub Actions"，或改用 "Deploy from a branch: main / (root)"。
 on:
   push:
     branches: [main]
@@ -35,10 +37,8 @@ jobs:
         run: python tools/collect_news.py
         continue-on-error: true
 
-      - name: 配置并启用 GitHub Pages
+      - name: 配置 GitHub Pages
         uses: actions/configure-pages@v5
-        with:
-          enablement: true
 
       - name: 上传网站文件
         uses: actions/upload-pages-artifact@v3
