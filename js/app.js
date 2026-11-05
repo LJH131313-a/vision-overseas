@@ -1,4 +1,5 @@
-/*! 远见·企业出海助手 —— 主应用（单页，全部模块共享同一项目情景） */
+/*! 远见·企业出海助手 —— 主应用（向导主线 + 按需追问 + 实时计算）
+ * 所有模块共享同一项目情景；输入变化即时重算，旧结果按输入指纹标记失效。 */
 (function () {
   'use strict';
 
@@ -50,10 +51,6 @@
     return fmtDate(s) + ' ' + String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0');
   }
   function newsId(it) { return E.hashInputs({ u: it.url, t: it.title }); }
-  function newsDate(it) {
-    var d = new Date(it.date || '');
-    return isNaN(d) ? String(it.date || '') : d.toISOString().slice(0, 10);
-  }
   var sourceMap = {};
   D.sources.forEach(function (s) { sourceMap[s.id] = s; });
   function sourceLink(id) {
@@ -92,7 +89,7 @@
     if (field.type === 'number' || field.type === 'integer') return 'number';
     if (field.type === 'date') return 'date';
     var opts = optionsOf(field);
-    if (field.type === 'tri_state' || (opts.length === 2 && (opts[0].v === true) && (opts[1].v === false))) return 'tri';
+    if (field.type === 'tri_state' || (opts.length === 2 && opts[0].v === true && opts[1].v === false)) return 'tri';
     return 'select';
   }
 
@@ -154,10 +151,12 @@
   function persist(feedback) {
     try {
       localStorage.setItem(LS_KEY, JSON.stringify(state));
-      $('saveHint').textContent = '已保存到本机浏览器 ' + new Date().toLocaleTimeString('zh-CN', { hour12: false });
+      var el = $('saveHint');
+      if (el) el.textContent = '已保存到本机 ' + new Date().toLocaleTimeString('zh-CN', { hour12: false });
       if (feedback) toast('已保存到本机浏览器（仅本设备，非多人协作）', 'ok');
     } catch (e) {
-      $('saveHint').textContent = '本机保存不可用（浏览器隐私模式或存储被禁用），本次修改仅当前会话有效';
+      var el2 = $('saveHint');
+      if (el2) el2.textContent = '本机保存不可用（隐私模式或存储被禁用），仅当前会话有效';
       if (feedback) toast('保存失败：' + e.message, 'err');
     }
   }
@@ -170,7 +169,6 @@
   }
   function touch() { proj().updatedAt = new Date().toISOString(); queueSave(); }
 
-  /* ---------- 输入指纹 ---------- */
   function inputHash() {
     var p = proj();
     return E.hashInputs({
@@ -207,108 +205,141 @@
     return out;
   }
 
-  /* ================= 选项数据 ================= */
+  /* ================= 派生数据与覆盖判断 ================= */
   var ruleJ = {};
   D.rules.forEach(function (r) { ruleJ[r.jurisdiction] = true; });
   var JUR = {};
   D.jurisdictions.forEach(function (j) { JUR[j.code] = j; });
+  var TAX_MARKETS = {};
+  D.taxProfiles.forEach(function (tp) { TAX_MARKETS[tp.market] = true; });
   function chainOf(code) { return E.jurisdictionChain(D, code); }
-  function marketHasRules(code) {
-    return chainOf(code).some(function (c) { return ruleJ[c]; });
-  }
+  function marketHasRules(code) { return chainOf(code).some(function (c) { return ruleJ[c]; }); }
   function subById(id) { return D.subcategories.find(function (s) { return s.id === id; }) || null; }
 
-  /* ================= 标签导航 ================= */
-  var currentTab = 'company';
+  /** 轻量覆盖判断（不打全量引擎）：返回该「品类 × 目的地」实际能走到哪一步 */
+  function supportOf(market, sub) {
+    if (!market) return { level: '', label: '未选目的地' };
+    if (!sub) return { level: '', label: '未选品类' };
+    if (sub.evidence === 'M1') return { level: 'L1', label: '仅资料导航（M1 草案）' };
+    var chain = chainOf(market);
+    var prof = null;
+    D.coverageProfiles.forEach(function (c) { if (c.market === market && c.legacy === sub.legacy) prof = c; });
+    var linked = {};
+    D.productRuleLinks.forEach(function (l) { if (l.sub === sub.id) linked[l.ruleId] = true; });
+    var hasT3 = D.rules.some(function (r) {
+      return r.origin === 'task3_verified_rule' && linked[r.id] && chain.indexOf(r.jurisdiction) >= 0;
+    });
+    if (prof && prof.level === 'L3' && TAX_MARKETS[market]) return { level: 'L3', label: '可复算税费' };
+    if (prof) return { level: prof.level === 'L3' ? 'L2' : prof.level, label: prof.label || '结构化初筛' };
+    if (hasT3) return { level: 'L2', label: '条件初筛' };
+    var hasIndex = D.regulations.some(function (r) { return chain.indexOf(r.jurisdiction) >= 0; });
+    return { level: 'L1', label: hasIndex ? '仅法规资料' : '超出数据覆盖' };
+  }
+
+  /* ================= 导航（侧栏向导） ================= */
+  var flowSteps = ['product', 'compliance', 'tax', 'news', 'qianwen', 'report'];
+  var currentTab = 'product';
+  var lastFlowTab = 'product';
   function showTab(name) {
+    if (name !== 'about') lastFlowTab = name;
     currentTab = name;
-    document.querySelectorAll('#tabs button').forEach(function (b) { b.classList.toggle('on', b.getAttribute('data-tab') === name); });
+    document.querySelectorAll('#sideNav .nav-item').forEach(function (b) {
+      b.classList.toggle('active', b.getAttribute('data-tab') === name);
+    });
     document.querySelectorAll('.view').forEach(function (v) { v.classList.toggle('on', v.id === 'view-' + name); });
     window.scrollTo(0, 0);
     renderTab(name);
+    updateDots();
   }
   function renderTab(name) {
-    if (name === 'company') renderCompanies();
-    else if (name === 'product') renderProduct();
-    else if (name === 'compliance') renderCompliance(true);
+    if (name === 'product') { renderCompanies(); renderProduct(); }
+    else if (name === 'compliance') renderCompliance();
     else if (name === 'tax') renderTax();
     else if (name === 'news') renderNews();
     else if (name === 'qianwen') renderQianwen();
     else if (name === 'report') renderReport();
     else if (name === 'about') renderAbout();
   }
+  /** 回答事实/修改输入后统一刷新：重渲染当前视图 + 步骤状态点 */
+  function refreshAll() {
+    renderTab(currentTab);
+    if (currentTab !== 'product' && currentTab !== 'about') updateDots();
+    else { updateDots(); }
+  }
+  function updateDots() {
+    var p = proj();
+    var ok = { product: !!(p.scenario.market && p.scenario.subcategoryId), news: p.newsSelected.length > 0 };
+    var sc = null;
+    try { sc = (ok.product) ? runCompliance() : null; } catch (e) { sc = null; }
+    var tax = null;
+    try { tax = E.calculateTaxes(D, taxInput()); } catch (e) { tax = null; }
+    var cur = inputHash();
+    setDot('dot-product', ok.product ? 'done' : 'warn');
+    if (sc) {
+      setDot('dot-compliance', sc.applicableRules.length > 0 && sc.unknownRules.length === 0 ? 'done' : (sc.applicableRules.length ? 'warn' : 'warn'));
+      setDot('dot-tax', tax && tax.complete_total !== null ? 'done' : (sc.hsCandidates.length ? 'warn' : 'warn'));
+    } else { setDot('dot-compliance', 'warn'); setDot('dot-tax', 'warn'); }
+    setDot('dot-news', ok.news ? 'done' : '');
+    var resp = p.qianwen.responses;
+    setDot('dot-qianwen', resp.length ? (resp[0].hash === cur ? 'done' : 'warn') : '');
+    setDot('dot-report', p.reportSnapshots.length ? (p.reportSnapshots[0].hash === cur ? 'done' : 'warn') : '');
+    var nm = $('projMiniName');
+    if (nm) nm.textContent = p.name;
+  }
+  function setDot(id, cls) {
+    var el = $(id);
+    if (!el) return;
+    el.className = 'dot' + (cls ? ' ' + cls : '');
+  }
 
-  /* ================= 模块 1：企业研究档案 ================= */
+  /* ================= 第 1 步：企业案例带入 ================= */
   function renderCompanies() {
     var host = $('companyList');
+    if (!host) return;
     clear(host);
+    var grid = h('div', { class: 'grid2' });
     D.companies.forEach(function (c) {
-      var card = h('div', { class: 'card' });
-      card.appendChild(h('h3', {}, c.fullName, h('span', { class: 'tag brand', style: 'margin-left:8px' }, '企业研究档案')));
+      var card = h('div', { class: 'card', style: 'margin:0' });
+      card.appendChild(h('h4', {}, c.name));
       card.appendChild(h('p', { class: 'subhint' }, c.tagline));
-      card.appendChild(h('p', { class: 'subhint' }, c.scopeNote));
-
-      // 研究路线
       var route = h('details', { class: 'box' });
       route.appendChild(h('summary', {}, c.researchRoute.title));
       route.appendChild(h('p', { class: 'banner warn' }, c.researchRoute.disclaimer));
-      var ol = h('ol', {});
-      c.researchRoute.steps.forEach(function (s) { ol.appendChild(h('li', {}, s)); });
+      var ol = h('ol', { style: 'margin:6px 0 8px 20px;padding:0' });
+      c.researchRoute.steps.forEach(function (s) { ol.appendChild(h('li', { style: 'font-size:13px' }, s)); });
       route.appendChild(ol);
-      route.appendChild(h('p', { class: 'subhint' }, '研究路线依据（点击打开原文）：'));
       c.researchRoute.sources.forEach(function (s) {
-        route.appendChild(h('div', {}, h('a', { href: s.url, target: '_blank', rel: 'noopener noreferrer' }, s.label)));
+        route.appendChild(h('div', { style: 'font-size:12.5px;margin:2px 0' }, h('a', { href: s.url, target: '_blank', rel: 'noopener noreferrer' }, s.label)));
       });
       card.appendChild(route);
-
-      // 市场状态
-      var mt = h('table', { class: 't' });
-      mt.appendChild(h('thead', {}, h('tr', {}, h('th', {}, '市场'), h('th', {}, '研究状态'), h('th', {}, '说明'))));
-      var tb = h('tbody', {});
-      c.markets.forEach(function (m) {
-        tb.appendChild(h('tr', {}, h('td', {}, m.name), h('td', {}, h('span', { class: 'tag warn' }, m.status)), h('td', {}, m.note)));
+      c.products.forEach(function (pr) {
+        var row = h('div', { class: 'qa' });
+        row.appendChild(h('div', { class: 'q' }, pr.model));
+        row.appendChild(h('div', { class: 'meta' }, pr.category + '｜' + pr.facts));
+        row.appendChild(h('div', { class: 'why' }, '待核实：' + pr.pending));
+        var srcLine = h('div', { class: 'meta' });
+        pr.sources.forEach(function (s, i) {
+          if (i) srcLine.appendChild(document.createTextNode(' '));
+          srcLine.appendChild(h('a', { href: s.url, target: '_blank', rel: 'noopener noreferrer' }, s.label));
+        });
+        row.appendChild(srcLine);
+        row.appendChild(h('button', {
+          class: 'btn sm sec', style: 'margin-top:7px',
+          onclick: function () { bringIn(c, pr); }
+        }, '带入本项目'));
+        card.appendChild(row);
       });
-      mt.appendChild(tb);
-      card.appendChild(mt);
-
-      // 产品
-      card.appendChild(h('h4', {}, '研究产品与待核实参数'));
-      var pt = h('table', { class: 't' });
-      pt.appendChild(h('thead', {}, h('tr', {}, h('th', {}, '型号'), h('th', {}, '品类'), h('th', {}, '已核参数'), h('th', {}, '待核实'), h('th', {}, '来源'), h('th', {}, '操作'))));
-      var pb = h('tbody', {});
-      c.products.forEach(function (p) {
-        var btn = h('button', { class: 'btn sm', onclick: function () { bringIn(c, p); } }, '带入产品登记');
-        var src = h('div', {});
-        p.sources.forEach(function (s) { src.appendChild(h('a', { href: s.url, target: '_blank', rel: 'noopener noreferrer' }, s.label)); src.appendChild(h('br')); });
-        pb.appendChild(h('tr', {},
-          h('td', {}, h('b', {}, p.model)),
-          h('td', {}, p.category),
-          h('td', {}, p.facts),
-          h('td', {}, h('span', { class: 'tag warn' }, '待核实'), p.pending),
-          h('td', {}, src),
-          h('td', {}, btn)));
-      });
-      pt.appendChild(pb);
-      card.appendChild(pt);
-      card.appendChild(h('p', { class: 'subhint' }, '带入时，参数标记为「企业档案（国内/官网版）」；出口版本（电压、插头、语言、认证配置）需重核，不能把国内型号当作出口型号。'));
-
-      // 财报
-      var ft = h('details', { class: 'box' });
-      ft.appendChild(h('summary', {}, '财报中的海外业务、税费与退款（公开披露，核验日 2026-11-04）'));
-      var ftab = h('table', { class: 't' });
-      var fhead = h('thead', {}, h('tr', {}, h('th', {}, '期间'), h('th', {}, '项目'), h('th', {}, '金额及口径'), h('th', {}, '来源')));
-      var fbody = h('tbody', {});
+      var fin = h('details', { class: 'box' });
+      fin.appendChild(h('summary', {}, '财报税费数据（' + c.finance.length + ' 条）'));
       c.finance.forEach(function (f) {
-        fbody.appendChild(h('tr', {}, h('td', {}, f.period), h('td', {}, f.item), h('td', {}, f.value),
-          h('td', {}, h('a', { href: f.url, target: '_blank', rel: 'noopener noreferrer' }, f.src))));
+        fin.appendChild(h('div', { style: 'font-size:12.5px;margin:3px 0' }, f.period + '｜' + f.item + '：' + f.value + ' ',
+          h('a', { href: f.url, target: '_blank', rel: 'noopener noreferrer' }, f.src)));
       });
-      ftab.appendChild(fhead); ftab.appendChild(fbody);
-      ft.appendChild(ftab);
-      ft.appendChild(h('p', { class: 'subhint' }, c.financeNote));
-      card.appendChild(ft);
-
-      host.appendChild(card);
+      fin.appendChild(h('p', { class: 'subhint' }, c.financeNote));
+      card.appendChild(fin);
+      grid.appendChild(card);
     });
+    host.appendChild(grid);
   }
 
   function bringIn(company, product) {
@@ -331,20 +362,25 @@
         p.scenario.factNotes[map[k]] = '企业档案带入（' + product.model + ' 国内/官网版参数，出口版需重核）';
       }
     });
-    if (bf.powerW) { p.scenario.facts.power_kw = bf.powerW / 1000; p.scenario.factsUnknown.power_kw = false; p.scenario.factNotes.power_kw = '企业档案带入（' + product.model + '）；国内版功率'; }
+    if (bf.powerW) {
+      p.scenario.facts.power_kw = bf.powerW / 1000;
+      p.scenario.factsUnknown.power_kw = false;
+      p.scenario.factNotes.power_kw = '企业档案带入（' + product.model + '）；国内版功率';
+    }
     p.scenario.facts.household = true;
     p.scenario.facts.end_use = 'consumer';
     p.scenario.factsUnknown.household = false;
     p.scenario.factsUnknown.end_use = false;
-    p.scenario.factNotes.household = '企业档案带入（家用产品）';
-    p.scenario.factNotes.end_use = '企业档案带入（面向消费者）';
     p.name = company.name + ' ' + product.model.split('（')[0] + ' 项目';
     touch();
-    showTab('product');
-    toast('已带入「' + product.model + '」研究参数。出口版参数与待核实项请继续核对。', 'ok');
+    var box = $('companyQuick');
+    if (box) box.open = false;
+    refreshAll();
+    refreshProjSelect();
+    toast('已带入「' + product.model + '」研究参数（国内/官网版，出口版需重核）', 'ok');
   }
 
-  /* ================= 模块 2：产品与市场登记 ================= */
+  /* ================= 第 1 步：项目与产品 ================= */
   function renderProduct() {
     var p = proj();
     $('pName').value = p.name;
@@ -352,81 +388,99 @@
     $('pPlacingDate').value = p.scenario.placingOnMarketDate || '';
     $('pImportDate').value = p.scenario.importDate || '';
     $('pRole').value = p.scenario.role || '';
+    renderMarketSelect();
+    renderGroupChips();
+    renderSubList();
+    renderBizFacts();
+    renderKeyFacts();
+    renderMoreFacts();
+    updateStep1Summary();
+  }
 
-    // 目的地
+  function renderMarketSelect() {
+    var p = proj();
     var sel = $('pMarket');
     clear(sel);
     sel.appendChild(h('option', { value: '' }, '请选择目的地'));
-    var withRules = D.jurisdictions.filter(function (j) { return marketHasRules(j.code); });
-    var others = D.jurisdictions.filter(function (j) { return !marketHasRules(j.code); });
-    var g1 = h('optgroup', { label: '已收录可执行规则的市场' });
-    withRules.forEach(function (j) { g1.appendChild(h('option', { value: j.code }, j.name + '（' + j.code + '）')); });
-    var g2 = h('optgroup', { label: '仅有法规索引 / 待规则核验' });
-    others.forEach(function (j) { g2.appendChild(h('option', { value: j.code }, j.name + '（' + j.code + '）')); });
-    sel.appendChild(g1); sel.appendChild(g2);
+    var g1 = h('optgroup', { label: '可复算税费（SG / AU）' });
+    var g2 = h('optgroup', { label: '可条件初筛' });
+    var g3 = h('optgroup', { label: '仅法规资料（选择后只会显示导航与缺口）' });
+    D.jurisdictions.forEach(function (j) {
+      var opt = h('option', { value: j.code }, j.name + '（' + j.code + '）');
+      if (TAX_MARKETS[j.code]) g1.appendChild(opt);
+      else if (marketHasRules(j.code)) g2.appendChild(opt);
+      else g3.appendChild(opt);
+    });
+    sel.appendChild(g1); sel.appendChild(g2); sel.appendChild(g3);
     sel.value = p.scenario.market || '';
     $('marketNote').textContent = marketNoteText(p.scenario.market);
-
-    // 大类/组/小类
-    var catSel = $('pCategory');
-    if (!catSel.options.length) {
-      clear(catSel);
-      catSel.appendChild(h('option', { value: '' }, '请选择大类'));
-      D.categories.forEach(function (c) { catSel.appendChild(h('option', { value: c.id }, c.name)); });
-    }
-    catSel.value = '';
-    fillGroups('');
-    if (p.scenario.subcategoryId) {
-      var sub = subById(p.scenario.subcategoryId);
-      if (sub) {
-        catSel.value = (D.groups.find(function (g) { return g.id === sub.group; }) || {}).category || '';
-        fillGroups(catSel.value);
-        $('pGroup').value = sub.group;
-        fillSubs(sub.group);
-        $('pSub').value = sub.id;
-      }
-    }
-    $('subNote').textContent = subNoteText(p.scenario.subcategoryId);
-
-    renderBizFacts();
-    renderDynFacts();
-    updateRegisterSummary();
   }
   function marketNoteText(code) {
-    if (!code) return '目的地决定允许进入的法域规则集合（含显式继承的上位法域）；不跨法域默认替代。';
+    if (!code) return '目的地决定允许进入的法域规则集合（含显式继承的上位法域）；不跨法域默认替代。「仅法规资料」档位的法域不会生成初筛结论，只会显示缺口与导航。';
     var j = JUR[code];
     if (!j) return '';
-    var has = marketHasRules(code);
     var inherits = (j.inherits || []).map(function (c) { return JUR[c] ? JUR[c].name : c; }).join('、');
-    return (j.note || '') + (inherits ? '；继承：' + inherits + '。' : '') +
-      (has ? '当前数据包对该法域链收录了可执行条件规则。' : '当前数据包对该法域暂无可执行规则，将显示资料导航与「待规则核验」清单，不输出虚假的完整结论。');
+    var tier = TAX_MARKETS[code] ? '该档位：可复算税费 + 条件初筛。' : marketHasRules(code) ? '该档位：条件初筛（HS/税费按缺口显示）。' : '该档位：仅法规资料导航，不会生成初筛或税额结论。';
+    return (j.note || '') + (inherits ? '；继承：' + inherits + '。' : '') + ' ' + tier;
   }
-  function fillGroups(catId) {
-    var g = $('pGroup');
-    clear(g);
-    g.appendChild(h('option', { value: '' }, catId ? '请选择产品组' : '先选大类'));
-    g.disabled = !catId;
-    if (catId) D.groups.filter(function (x) { return x.category === catId; }).forEach(function (x) { g.appendChild(h('option', { value: x.id }, x.name)); });
-  }
-  function fillSubs(groupId) {
-    var s = $('pSub');
-    clear(s);
-    s.appendChild(h('option', { value: '' }, groupId ? '请选择叶子小类' : '先选产品组'));
-    s.disabled = !groupId;
-    if (groupId) D.subcategories.filter(function (x) { return x.group === groupId; }).forEach(function (x) {
-      s.appendChild(h('option', { value: x.id }, x.name + '（' + x.evidence + '）'));
+
+  var selectedGroup = '';
+  function renderGroupChips() {
+    var host = $('groupChips');
+    clear(host);
+    var p = proj();
+    var sub = subById(p.scenario.subcategoryId);
+    if (sub && !selectedGroup) selectedGroup = sub.group;
+    D.groups.forEach(function (g) {
+      var count = D.subcategories.filter(function (s) { return s.group === g.id; }).length;
+      var btn = h('button', {
+        type: 'button', class: selectedGroup === g.id ? 'on' : '',
+        onclick: function () { selectedGroup = g.id; renderGroupChips(); renderSubList(); }
+      }, g.name, h('em', {}, String(count)));
+      host.appendChild(btn);
     });
   }
-  function subNoteText(id) {
-    var s = subById(id);
-    if (!s) return '小类决定动态问题、规则候选路由与 HS 候选；M1 表示证据等级为草案，不能宣称完整合规初筛。';
-    return '主要功能：' + s.core + '。可变配置：' + s.variable + '。证据等级 ' + s.evidence + (s.evidence === 'M1' ? '（草案：分类与资料导航可用，不输出完整初筛结论）' : '') + '。HS 相关特征：' + s.hsFeatures + '。';
+  function renderSubList() {
+    var host = $('subList');
+    clear(host);
+    var p = proj();
+    if (!selectedGroup) { host.appendChild(h('p', { class: 'subhint' }, '选择上方产品组后显示品类卡片。')); return; }
+    var market = p.scenario.market;
+    var subs = D.subcategories.filter(function (s) { return s.group === selectedGroup; })
+      .sort(function (a, b) {
+        var ra = supportOf(market, a), rb = supportOf(market, b);
+        var order = { L3: 0, L2: 1, L1: 2, '': 3 };
+        return (order[ra.level] === undefined ? 3 : order[ra.level]) - (order[rb.level] === undefined ? 3 : order[rb.level]);
+      });
+    subs.forEach(function (s) {
+      var sup = supportOf(market, s);
+      var on = p.scenario.subcategoryId === s.id;
+      var item = h('div', {
+        class: 'sub-item' + (on ? ' on' : '') + (s.evidence === 'M1' ? ' m1' : ''),
+        onclick: function () {
+          proj().scenario.subcategoryId = s.id;
+          touch();
+          refreshAll();
+        }
+      });
+      item.appendChild(h('div', { class: 's-name' }, s.name));
+      var badges = h('div', { class: 's-badges' });
+      badges.appendChild(h('span', { class: 'tag ' + (sup.level === 'L3' ? 'ok' : sup.level === 'L2' ? 'info' : 'warn') },
+        market ? sup.label : '选目的地后显示支持度'));
+      badges.appendChild(h('span', { class: 'tag' }, s.evidence));
+      item.appendChild(badges);
+      item.appendChild(h('div', { class: 'meta', style: 'font-size:12px;color:var(--faint);margin-top:5px' }, s.core + '｜' + s.keyParams));
+      host.appendChild(item);
+    });
+    var sub = subById(p.scenario.subcategoryId);
+    $('subNote').textContent = sub
+      ? '已选：' + sub.name + '（' + sub.id + '，证据 ' + sub.evidence + '）。可变配置：' + sub.variable + '。HS 相关特征：' + sub.hsFeatures + '。'
+      : '小类决定动态问题、规则候选路由与 HS 候选；M1 为草案证据等级，仅资料导航。';
   }
 
   var BIZ_FACTS = [
     { key: 'consumer_product', label: '是否面向消费者的产品' },
-    { key: 'offered_online', label: '是否在线向目的地消费者展示销售要约' },
-    { key: 'packaging_present', label: '投放市场时是否带包装' }
+    { key: 'offered_online', label: '是否在线向目的地消费者展示销售要约' }
   ];
   function renderBizFacts() {
     var host = $('bizFacts');
@@ -434,26 +488,24 @@
     var p = proj();
     var codes = chainOf(p.scenario.market);
     var list = BIZ_FACTS.slice();
-    if (codes.indexOf('EU') >= 0) list.push({ key: 'eu_established_economic_operator', label: '是否已有欧盟境内责任经济运营者（欧盟市场需要）' });
-    list.forEach(function (f) {
-      host.appendChild(triControl(f.label, f.key));
-    });
+    if (codes.indexOf('EU') >= 0) list.push({ key: 'eu_established_economic_operator', label: '是否已有欧盟境内责任经济运营者' });
+    if (codes.indexOf('EU') >= 0 || codes.indexOf('UK_GB') >= 0) list.push({ key: 'packaging_present', label: '投放市场时是否带包装' });
+    list.forEach(function (f) { host.appendChild(triControl(f.label, f.key)); });
   }
-  function triControl(label, key, extraMeta) {
+  function triControl(label, key, whyText) {
     var val = getFact(key);
-    var wrap = h('div', { class: 'qa' });
+    var wrap = h('div', { class: 'qa' + (val !== '' && val !== 'unknown' ? ' answered' : '') });
     wrap.appendChild(h('div', { class: 'q' }, label));
-    var meta = h('div', { class: 'meta' }, extraMeta || '');
-    wrap.appendChild(meta);
+    if (val === 'unknown') wrap.appendChild(h('div', { class: 'why' }, '已标记不确定：相关判断保持「待确认」，不按否处理。'));
+    else if (whyText) wrap.appendChild(h('div', { class: 'meta' }, whyText));
+    var notes = proj().scenario.factNotes[key];
+    if (notes) wrap.appendChild(h('div', { class: 'meta' }, '来源：' + notes));
     var tri = h('div', { class: 'tri' });
     [['true', '是'], ['false', '否'], ['unknown', '不确定']].forEach(function (pair) {
       var on = (pair[0] === 'unknown') ? val === 'unknown' : (val === true && pair[0] === 'true') || (val === false && pair[0] === 'false');
       tri.appendChild(h('button', {
         type: 'button', class: (pair[0] === 'unknown' ? 'unknown ' : '') + (on ? 'on' : ''),
-        onclick: function () {
-          setFact(key, pair[0] === 'unknown' ? 'unknown' : (pair[0] === 'true'));
-          renderBizFacts(); renderDynFacts(); updateRegisterSummary();
-        }
+        onclick: function () { setFact(key, pair[0] === 'unknown' ? 'unknown' : (pair[0] === 'true')); refreshAll(); }
       }, pair[1]));
     });
     wrap.appendChild(tri);
@@ -472,20 +524,48 @@
         return { map: m, field: f };
       }).filter(Boolean);
   }
-  function renderDynFacts() {
-    var host = $('dynFacts');
+  /** 按需：当前目的地 + 品类下，引擎判定「缺了就无法下结论」的字段 */
+  function keyQuestionFields() {
+    var sc = runCompliance();
+    if (!sc) return [];
+    return sc.questions;
+  }
+  function renderKeyFacts() {
+    var host = $('keyFacts');
+    var hint = $('keyFactsHint');
     clear(host);
-    var sub = proj().scenario.subcategoryId;
-    if (!sub) { $('dynIntro').textContent = '选定叶子小类后显示对应问题；不同品类出现不同问题。'; return; }
-    var qs = dynQuestions();
-    $('dynIntro').textContent = '「' + subById(sub).name + '」共 ' + qs.length + ' 项已发布问题（来自产品知识包，均允许回答不确定）。未列入的问题不影响当前法域的规则判断。';
-    qs.forEach(function (q) {
-      host.appendChild(questionControl(q.field, q.map));
+    var p = proj();
+    if (!p.scenario.market || !p.scenario.subcategoryId) {
+      hint.textContent = '';
+      host.appendChild(h('p', { class: 'subhint' }, '选定目的地与品类后，这里只显示影响判断的问题。'));
+      return;
+    }
+    var ks = keyQuestionFields();
+    hint.textContent = '当前 ' + ks.length + ' 项待答';
+    if (!ks.length) {
+      host.appendChild(h('div', { class: 'banner ok' }, '影响当前判断的关键事实已齐备，可进入合规初筛。'));
+      return;
+    }
+    ks.forEach(function (q) {
+      var why = '不回答则无法判断：' + (q.affectedRules || []).join('、');
+      host.appendChild(questionControl(q.field, { businessUse: q.field.businessUse || '' }, why));
     });
   }
-  function questionControl(field, map) {
+  function renderMoreFacts() {
+    var host = $('moreFacts');
+    clear(host);
+    var p = proj().scenario;
+    var qs = dynQuestions();
+    if (!qs.length) { host.appendChild(h('p', { class: 'subhint' }, '该品类暂无更多已发布参数。')); return; }
+    var keySet = {};
+    keyQuestionFields().forEach(function (q) { keySet[q.field.key] = true; });
+    var rest = qs.filter(function (q) { return !keySet[q.field.key]; });
+    host.appendChild(h('p', { class: 'subhint' }, '共 ' + rest.length + ' 项；这些参数不会改变当前目的地的初筛、HS 或税费结论，仅在你想补充资料时填写。'));
+    rest.forEach(function (q) { host.appendChild(questionControl(q.field, q.map, '')); });
+  }
+  function questionControl(field, map, whyText) {
     var val = getFact(field.key);
-    var wrap = h('div', { class: 'qa' });
+    var wrap = h('div', { class: 'qa' + (val !== '' && val !== 'unknown' ? ' answered' : '') });
     wrap.appendChild(h('div', { class: 'q' }, field.name + (field.unit ? '（' + field.unit + '）' : '')));
     var judgments = (map && map.judgments || []).map(function (j) {
       var jn = D.judgments.find(function (x) { return x.id === j; });
@@ -494,9 +574,11 @@
     var noteBits = [];
     if (map && map.businessUse) noteBits.push(map.businessUse);
     if (judgments.length) noteBits.push('影响判断：' + judgments.join('、'));
+    if (whyText) noteBits.push(whyText);
     var notes = proj().scenario.factNotes[field.key];
     if (notes) noteBits.push('来源：' + notes);
-    wrap.appendChild(h('div', { class: 'meta' }, noteBits.join('；')));
+    if (noteBits.length) wrap.appendChild(h('div', { class: 'meta' }, noteBits.join('；')));
+    if (val === 'unknown') wrap.appendChild(h('div', { class: 'why' }, '已标记不确定：对应判断保持「待确认」。'));
     var t = fieldType(field);
     if (t === 'tri') {
       var tri = h('div', { class: 'tri' });
@@ -504,83 +586,83 @@
         var on = (pair[0] === 'unknown') ? val === 'unknown' : (val === true && pair[0] === 'true') || (val === false && pair[0] === 'false');
         tri.appendChild(h('button', {
           type: 'button', class: (pair[0] === 'unknown' ? 'unknown ' : '') + (on ? 'on' : ''),
-          onclick: function () {
-            setFact(field.key, pair[0] === 'unknown' ? 'unknown' : (pair[0] === 'true'));
-            renderDynFacts(); updateRegisterSummary();
-          }
+          onclick: function () { setFact(field.key, pair[0] === 'unknown' ? 'unknown' : (pair[0] === 'true')); refreshAll(); }
         }, pair[1]));
       });
       wrap.appendChild(tri);
     } else if (t === 'number') {
       var row = h('div', { style: 'display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:6px' });
-      var inp = h('input', { type: 'number', step: 'any', min: '0', value: val === 'unknown' || val === '' ? '' : String(val), style: 'border:1px solid var(--line);border-radius:6px;padding:6px 9px;width:150px' });
+      var inp = h('input', { type: 'number', step: 'any', min: '0', value: val === 'unknown' || val === '' ? '' : String(val), style: 'border:1px solid var(--line);border-radius:8px;padding:7px 10px;width:150px' });
       inp.addEventListener('change', function () {
         if (inp.value === '') setFact(field.key, 'unknown');
         else setFact(field.key, Number(inp.value));
-        renderDynFacts(); updateRegisterSummary();
+        refreshAll();
       });
       row.appendChild(inp);
-      var ub = h('button', { type: 'button', class: 'btn sm sec' + (val === 'unknown' ? ' ' : ''), onclick: function () { setFact(field.key, 'unknown'); renderDynFacts(); updateRegisterSummary(); } }, '不确定');
-      if (val === 'unknown') ub.classList.add('on');
+      var ub = h('button', { type: 'button', class: 'btn sm sec' + (val === 'unknown' ? ' on' : ''), onclick: function () { setFact(field.key, 'unknown'); refreshAll(); } }, '不确定');
       row.appendChild(ub);
       wrap.appendChild(row);
     } else if (t === 'date') {
-      var inp2 = h('input', { type: 'date', value: val === 'unknown' ? '' : String(val || ''), style: 'border:1px solid var(--line);border-radius:6px;padding:6px 9px;margin-top:6px' });
-      inp2.addEventListener('change', function () { setFact(field.key, inp2.value || 'unknown'); renderDynFacts(); updateRegisterSummary(); });
+      var inp2 = h('input', { type: 'date', value: val === 'unknown' ? '' : String(val || ''), style: 'border:1px solid var(--line);border-radius:8px;padding:7px 10px;margin-top:6px' });
+      inp2.addEventListener('change', function () { setFact(field.key, inp2.value || 'unknown'); refreshAll(); });
       wrap.appendChild(inp2);
     } else {
-      var sel = h('select', { style: 'border:1px solid var(--line);border-radius:6px;padding:6px 9px;margin-top:6px;max-width:320px' });
+      var sel = h('select', { style: 'border:1px solid var(--line);border-radius:8px;padding:7px 10px;margin-top:6px;max-width:330px' });
       sel.appendChild(h('option', { value: '' }, '请选择 / 暂不确定'));
       optionsOf(field).forEach(function (o) { sel.appendChild(h('option', { value: typeof o.v === 'boolean' ? String(o.v) : o.v }, o.label)); });
       sel.value = val === 'unknown' ? '' : String(val === true ? 'true' : val === false ? 'false' : (val || ''));
-      sel.addEventListener('change', function () {
-        setFact(field.key, sel.value === '' ? 'unknown' : sel.value);
-        renderDynFacts(); updateRegisterSummary();
-      });
+      sel.addEventListener('change', function () { setFact(field.key, sel.value === '' ? 'unknown' : sel.value); refreshAll(); });
       wrap.appendChild(sel);
     }
     return wrap;
   }
-  function updateRegisterSummary() {
+
+  function updateStep1Summary() {
     var p = proj();
-    var qs = dynQuestions();
-    var unknowns = qs.filter(function (q) { return getFact(q.field.key) === 'unknown'; });
-    var answered = qs.filter(function (q) { var v = getFact(q.field.key); return v !== '' && v !== 'unknown'; });
+    var sub = subById(p.scenario.subcategoryId);
     var bits = [];
-    bits.push('已登记：目的地 ' + (p.scenario.market ? (JUR[p.scenario.market] ? JUR[p.scenario.market].name : p.scenario.market) : '未选') +
-      '；小类 ' + (p.scenario.subcategoryId ? subById(p.scenario.subcategoryId).name : '未选') +
-      '；投放日期 ' + (p.scenario.placingOnMarketDate || '未填') + '。');
-    bits.push('产品事实：已答 ' + answered.length + ' / ' + qs.length + '，其中标记不确定 ' + unknowns.length + ' 项。');
-    if (unknowns.length) {
-      var names = unknowns.map(function (q) { return q.field.name; }).slice(0, 6).join('、');
-      bits.push('不确定项（对应判断将保持待确认，不会按「否」处理）：' + names + (unknowns.length > 6 ? ' 等' : '') + '。');
+    bits.push(p.scenario.market ? '目的地：' + (JUR[p.scenario.market] ? JUR[p.scenario.market].name : p.scenario.market) : '未选目的地');
+    bits.push(sub ? '品类：' + sub.name : '未选品类');
+    if (p.scenario.market && sub) {
+      var sup = supportOf(p.scenario.market, sub);
+      bits.push('支持度：' + sup.label);
+      var ks = keyQuestionFields();
+      bits.push('关键事实待答 ' + ks.length + ' 项');
     }
-    $('registerSummary').textContent = bits.join(' ');
+    var lead = $('heroLead');
+    if (lead) {
+      lead.textContent = sub && p.scenario.market
+        ? '已登记：' + sub.name + ' × ' + (JUR[p.scenario.market] ? JUR[p.scenario.market].name : p.scenario.market) + '（' + supportOf(p.scenario.market, sub).label + '）。'
+        : '先选好「产品 × 目的地」，系统只追问影响当前判断的关键事实；案例资料可一键带入。';
+    }
+    var hs = $('heroStatus');
+    if (hs) {
+      clear(hs);
+      var sc = runCompliance();
+      var tax = sc ? null : null;
+      hs.appendChild(hstat('可能适用规则', sc ? String(sc.applicableRules.length) : '—', sc ? '待补 ' + sc.unknownRules.length + ' 项' : '完成登记后实时计算'));
+      hs.appendChild(hstat('关键事实待答', sc ? String(keyQuestionFields().length) : '—', '答完即自动重算'));
+      if (sc && sc.hsCandidates.length) hs.appendChild(hstat('HS 候选', String(sc.hsCandidates.length), '第 3 步可选用'));
+      else hs.appendChild(hstat('HS 候选', '—', '该组合暂无目的国候选（缺口）'));
+    }
+    $('step1Summary').textContent = bits.join('　·　');
+  }
+  function hstat(label, value, note) {
+    return h('div', { class: 'hstat' },
+      h('span', {}, h('small', {}, label), h('div', {}, h('b', {}, value))),
+      h('span', { class: 'subhint', style: 'text-align:right;max-width:150px' }, note));
   }
 
-  /* ---------- 产品页事件 ---------- */
+  /* ---------- 第 1 步事件 ---------- */
   $('pName').addEventListener('change', function () { proj().name = $('pName').value || '未命名项目'; touch(); refreshProjSelect(); });
   $('pCompany').addEventListener('change', function () { proj().companyName = $('pCompany').value; touch(); });
-  $('pPlacingDate').addEventListener('change', function () { proj().scenario.placingOnMarketDate = $('pPlacingDate').value; touch(); updateRegisterSummary(); });
+  $('pPlacingDate').addEventListener('change', function () { proj().scenario.placingOnMarketDate = $('pPlacingDate').value; touch(); refreshAll(); });
   $('pImportDate').addEventListener('change', function () { proj().scenario.importDate = $('pImportDate').value; touch(); });
   $('pRole').addEventListener('change', function () { proj().scenario.role = $('pRole').value; touch(); });
-  $('pMarket').addEventListener('change', function () {
-    proj().scenario.market = $('pMarket').value;
-    touch();
-    $('marketNote').textContent = marketNoteText(proj().scenario.market);
-    renderBizFacts(); updateRegisterSummary();
-  });
-  $('pCategory').addEventListener('change', function () { fillGroups($('pCategory').value); fillSubs(''); $('subNote').textContent = subNoteText(''); });
-  $('pGroup').addEventListener('change', function () { fillSubs($('pGroup').value); $('subNote').textContent = subNoteText(''); });
-  $('pSub').addEventListener('change', function () {
-    proj().scenario.subcategoryId = $('pSub').value;
-    touch();
-    $('subNote').textContent = subNoteText(proj().scenario.subcategoryId);
-    renderDynFacts(); updateRegisterSummary();
-  });
-  $('btnGoCompliance').addEventListener('click', function () { showTab('compliance'); });
+  $('pMarket').addEventListener('change', function () { proj().scenario.market = $('pMarket').value; touch(); refreshAll(); });
+  $('btnNext1').addEventListener('click', function () { showTab('compliance'); });
 
-  /* ================= 模块 3：合规初筛 ================= */
+  /* ================= 第 2 步：合规初筛（实时） ================= */
   function runCompliance() {
     var p = proj();
     if (!p.scenario.market || !p.scenario.subcategoryId) return null;
@@ -591,60 +673,21 @@
       placingOnMarketDate: p.scenario.placingOnMarketDate || ''
     });
   }
-  var lastCompliance = null;
-  function renderCompliance(auto) {
-    var host = $('complianceResult');
-    clear(host);
-    var p = proj();
-    if (!p.scenario.market || !p.scenario.subcategoryId) {
-      host.appendChild(h('div', { class: 'banner warn' }, '请先在第 2 步完成目的地与产品小类登记，再运行条件初筛。'));
-      return;
-    }
-    if (auto) {
-      // 自动计算（不阻塞）
-      lastCompliance = runCompliance();
-      renderComplianceResult(host, lastCompliance);
-      return;
-    }
-    // 手动运行：给加载反馈
-    $('complianceRunInfo').textContent = '正在评估…';
-    var btn = $('btnRunCompliance');
-    btn.disabled = true;
-    btn.innerHTML = '';
-    btn.appendChild(h('span', { class: 'spin' }));
-    btn.appendChild(document.createTextNode('评估中'));
-    setTimeout(function () {
-      try {
-        lastCompliance = runCompliance();
-        renderComplianceResult(host, lastCompliance);
-        $('complianceRunInfo').textContent = '评估完成：适用 ' + (lastCompliance ? lastCompliance.applicableRules.length : 0) + ' 条，待补事实 ' + (lastCompliance ? lastCompliance.unknownRules.length : 0) + ' 条（快照 ' + E.SNAPSHOT_DATE + '）';
-        toast('条件初筛完成', 'ok');
-      } catch (e) {
-        host.appendChild(h('div', { class: 'banner bad' }, '评估失败：' + e.message + '。请检查登记信息后重试。'));
-        toast('评估失败：' + e.message, 'err');
-      } finally {
-        btn.disabled = false;
-        btn.textContent = '运行条件初筛';
-      }
-    }, 120);
-  }
-  function ruleCard(r) {
+  function ruleCard(r, sc) {
     var card = h('div', { class: 'rule-item state-' + (r.state === 'applicable' ? 'applicable' : r.state === 'review_required' ? 'review' : r.state === 'unknown' ? 'unknown' : 'not') });
     var head = h('div', { class: 'head' });
     head.appendChild(h('b', {}, r.name || r.id));
     head.appendChild(h('span', { class: 'tag' }, r.id));
     head.appendChild(h('span', { class: 'tag brand' }, (JUR[r.jurisdiction] ? JUR[r.jurisdiction].name : r.jurisdiction)));
-    if (D.topics.length) {
-      var tp = D.topics.find(function (t) { return t.id === r.topic; });
-      if (tp) head.appendChild(h('span', { class: 'tag' }, tp.name));
-    }
+    var tp = D.topics.find(function (t) { return t.id === r.topic; });
+    if (tp) head.appendChild(h('span', { class: 'tag' }, tp.name));
     if (r.state === 'review_required' || r.humanReview) head.appendChild(h('span', { class: 'tag info' }, '需人工复核'));
     if (r.origin === 'task3_verified_rule') head.appendChild(h('span', { class: 'tag ok' }, '条款级核验规则'));
     card.appendChild(head);
     var body = h('div', { class: 'body' });
     if (r.state === 'unknown') {
       var miss = (r.missingFields || []).map(function (k) { var f = lookupField(k); return f ? f.name : k; });
-      body.appendChild(h('div', {}, '待补事实：', miss.join('、') || '（见下方问题）'));
+      body.appendChild(h('div', {}, '待补事实：', miss.join('、') || '（见上方关键事实）'));
     } else if (r.state === 'not_applicable') {
       var why = [];
       if (r.dateActive === false) why.push(r.dateReason);
@@ -654,9 +697,7 @@
     } else {
       if (r.obligation) body.appendChild(h('div', {}, r.obligation));
       if (r.exceptions) body.appendChild(h('div', { class: 'subhint' }, '例外与提示：' + r.exceptions));
-      if (r.dateNote) body.appendChild(h('div', { class: 'subhint' }, r.dateNote));
-      if (r.effectiveFrom || r.effectiveTo) body.appendChild(h('div', { class: 'subhint' }, '适用期：' + (r.effectiveFrom || '不限') + ' 至 ' + (r.effectiveTo || '不限') + '；按投放日期 ' + (lastCompliance ? lastCompliance.asOf : '') + ' 选版本。'));
-      if (r.humanReviewNote) body.appendChild(h('div', { class: 'subhint' }, '人工复核：' + r.humanReviewNote));
+      if (r.effectiveFrom || r.effectiveTo) body.appendChild(h('div', { class: 'subhint' }, '适用期：' + (r.effectiveFrom || '不限') + ' 至 ' + (r.effectiveTo || '不限') + '；按投放日期 ' + (sc ? sc.asOf : '') + ' 选版本。'));
     }
     card.appendChild(body);
     if (r.locator || (r.sourceIds && r.sourceIds.length)) {
@@ -667,75 +708,63 @@
     }
     return card;
   }
-  function renderComplianceResult(host, sc) {
-    if (!sc) return;
-    // 覆盖横幅
-    var cov = h('div', { class: 'banner ' + (sc.coverage.level === 'L1' ? 'warn' : 'info') });
-    cov.appendChild(document.createTextNode('服务覆盖等级：' + sc.coverage.level + '（' + sc.coverage.label + '）。' + sc.coverageDefinition));
-    host.appendChild(cov);
+  function renderCompliance() {
+    var host = $('complianceResult');
+    clear(host);
+    var p = proj();
+    if (!p.scenario.market || !p.scenario.subcategoryId) {
+      host.appendChild(h('div', { class: 'banner warn' }, '尚未完成第 1 步的目的地与品类登记，无法初筛。'));
+      $('btnBack1').focus();
+      return;
+    }
+    var sc = runCompliance();
+    $('complianceRunInfo').textContent = '实时计算：可能适用 ' + sc.applicableRules.length + ' 条 · 待补事实 ' + sc.unknownRules.length + ' 条 · 不适用 ' + sc.excludedRules.length + ' 条（快照 ' + E.SNAPSHOT_DATE + '，法域链 ' + sc.jurisdictionChain.join(' → ') + '）';
+
+    host.appendChild(h('div', { class: 'banner ' + (sc.coverage.level === 'L1' ? 'warn' : 'info') },
+      '服务覆盖等级：' + sc.coverage.level + '（' + sc.coverage.label + '）。' + sc.coverageDefinition));
     sc.gaps.forEach(function (g) { host.appendChild(h('div', { class: 'banner bad' }, '覆盖缺口：' + g)); });
 
-    // 分组
-    var g1 = h('div', { class: 'card' });
-    g1.appendChild(h('h3', {}, '可能适用（' + sc.applicableRules.length + ' 条）', h('span', { class: 'subhint', style: 'margin-left:8px' }, '只有这些规则会生成行动与材料；含需人工复核项')));
-    if (!sc.applicableRules.length) g1.appendChild(h('p', { class: 'subhint' }, '当前输入下没有明确适用的规则；请查看「待补事实」与「待规则核验」。'));
-    sc.applicableRules.forEach(function (r) { g1.appendChild(ruleCard(r)); });
+    // 待补事实置顶（有则优先处理）
+    if (sc.questions.length) {
+      var gq = h('div', { class: 'card group-state' });
+      gq.appendChild(h('h3', {}, h('span', { class: 'count-badge warn' }, String(sc.unknownRules.length)), '待补事实（回答后自动重算）'));
+      sc.questions.forEach(function (q) {
+        gq.appendChild(questionControl(q.field, { businessUse: q.field.businessUse || '' }, '影响规则：' + (q.affectedRules || []).join('、')));
+      });
+      host.appendChild(gq);
+    }
+
+    var g1 = h('div', { class: 'card group-state' });
+    g1.appendChild(h('h3', {}, h('span', { class: 'count-badge' }, String(sc.applicableRules.length)), '可能适用'));
+    if (!sc.applicableRules.length) g1.appendChild(h('p', { class: 'subhint' }, '当前输入下没有明确适用的规则；请处理上方待补事实，并查看待规则核验清单。'));
+    sc.applicableRules.forEach(function (r) { g1.appendChild(ruleCard(r, sc)); });
     host.appendChild(g1);
 
-    // 待补事实 + 追问
-    var g2 = h('div', { class: 'card' });
-    g2.appendChild(h('h3', {}, '待补事实（' + sc.unknownRules.length + ' 条规则待确认）'));
-    g2.appendChild(h('p', { class: 'subhint' }, '以下事实缺失时对应规则不能判断；回答后立即重新计算。缺失不会按「否」处理。'));
-    if (!sc.questions.length) g2.appendChild(h('p', { class: 'subhint' }, '没有可自动追问的缺失事实。'));
-    sc.questions.forEach(function (q) {
-      var f = q.field;
-      g2.appendChild(questionControl(f, { judgments: [], businessUse: f.businessUse || (f.name === f.name ? '' : '') }));
-      var affected = h('div', { class: 'subhint', style: 'margin:-4px 0 8px' }, '影响规则：' + (q.affectedRules.join('、') || '—'));
-      g2.appendChild(affected);
-    });
-    if (sc.unknownRules.length) {
-      var d2 = h('details', { class: 'box' });
-      d2.appendChild(h('summary', {}, '查看待确认规则明细（' + sc.unknownRules.length + '）'));
-      sc.unknownRules.forEach(function (r) { d2.appendChild(ruleCard(r)); });
-      g2.appendChild(d2);
+    var g2 = h('div', { class: 'card group-state' });
+    g2.appendChild(h('h3', {}, '单条规则不适用（' + sc.excludedRules.length + '）· 待规则核验（' + sc.pendingRegulations.length + '）'));
+    var d2 = h('details', { class: 'box' });
+    d2.appendChild(h('summary', {}, '不适用规则（每条有原因）'));
+    sc.excludedRules.forEach(function (r) { d2.appendChild(ruleCard(r, sc)); });
+    g2.appendChild(d2);
+    if (sc.pendingRegulations.length) {
+      var d3 = h('details', { class: 'box' });
+      d3.appendChild(h('summary', {}, '待规则核验：已有来源索引、暂无可执行条款规则（' + sc.pendingRegulations.length + ' 条）'));
+      d3.appendChild(h('p', { class: 'subhint' }, '这些法规不会生成义务结论，必须人工核对原文后再判断。'));
+      sc.pendingRegulations.forEach(function (reg) {
+        var it = h('div', { style: 'font-size:13px;margin:5px 0' },
+          '· ' + reg.name + '（' + reg.id + '，核验 ' + reg.checkedAt + '）',
+          h('span', { class: 'tag warn' }, reg.maturity === 'verified_index_only' ? '索引级' : reg.maturity),
+          reg.officialUrl ? h('a', { href: reg.officialUrl, target: '_blank', rel: 'noopener noreferrer', style: 'margin-left:6px' }, '原文') : null);
+        d3.appendChild(it);
+      });
+      g2.appendChild(d3);
     }
     host.appendChild(g2);
 
-    // 不适用
-    var g3 = h('div', { class: 'card' });
-    g3.appendChild(h('h3', {}, '单条规则不适用（' + sc.excludedRules.length + ' 条）'));
-    g3.appendChild(h('p', { class: 'subhint' }, '按当前事实与投放日期明确不满足的规则；每条给出原因，可展开核对。'));
-    var d3 = h('details', { class: 'box' });
-    d3.appendChild(h('summary', {}, '展开不适用规则（' + sc.excludedRules.length + '）'));
-    sc.excludedRules.forEach(function (r) { d3.appendChild(ruleCard(r)); });
-    g3.appendChild(d3);
-    host.appendChild(g3);
-
-    // 待规则核验
-    var g4 = h('div', { class: 'card' });
-    g4.appendChild(h('h3', {}, '待规则核验（' + sc.pendingRegulations.length + ' 条法规）'));
-    g4.appendChild(h('p', { class: 'subhint' }, '以下法规在目的法域链内已有来源索引，但尚未形成可自动执行的条款级规则。它们不会生成义务结论，必须人工核对原文后再判断。'));
-    if (!sc.pendingRegulations.length) g4.appendChild(h('p', { class: 'subhint' }, '当前法域链内的法规均有可执行规则或不在索引内。'));
-    sc.pendingRegulations.forEach(function (reg) {
-      var it = h('div', { class: 'rule-item state-not' });
-      var head = h('div', { class: 'head' });
-      head.appendChild(h('b', {}, reg.name));
-      head.appendChild(h('span', { class: 'tag' }, reg.id));
-      head.appendChild(h('span', { class: 'tag warn' }, reg.maturity === 'verified_index_only' ? '索引已核，无条款规则' : reg.maturity));
-      it.appendChild(head);
-      it.appendChild(h('div', { class: 'body' }, (reg.purpose || '') + (reg.techConditions ? '。适用条件：' + reg.techConditions : '')));
-      var src = h('div', { class: 'src' }, '核验日期：' + reg.checkedAt + '　');
-      if (reg.officialUrl) src.appendChild(h('a', { href: reg.officialUrl, target: '_blank', rel: 'noopener noreferrer' }, '打开官方来源'));
-      it.appendChild(src);
-      g4.appendChild(it);
-    });
-    host.appendChild(g4);
-
-    // 行动与材料
-    var g5 = h('div', { class: 'card' });
-    g5.appendChild(h('h3', {}, '办理行动与材料清单（来自可能适用规则）'));
-    g5.appendChild(h('p', { class: 'subhint' }, '勾选状态仅保存在本机，用于团队跟踪，不等同于合规完成证明。'));
-    if (!sc.actionList.length) g5.appendChild(h('p', { class: 'subhint' }, '当前没有适用的规则，因此没有生成的行动与材料。'));
+    var g4 = h('div', { class: 'card group-state' });
+    g4.appendChild(h('h3', {}, '办理行动与材料（来自可能适用规则）'));
+    g4.appendChild(h('p', { class: 'subhint' }, '勾选状态仅保存在本机，用于团队跟踪，不等同于合规完成证明。'));
+    if (!sc.actionList.length) g4.appendChild(h('p', { class: 'subhint' }, '当前没有适用规则，因此没有生成的行动与材料——这不代表无需办理任何手续，请查看缺口与待核验清单。'));
     sc.actionList.forEach(function (a) {
       var done = !!(proj().todoState[a.id] && proj().todoState[a.id].done);
       var row = h('div', { class: 'todo-row' + (done ? ' done' : '') });
@@ -744,7 +773,7 @@
       cb.addEventListener('change', function () {
         proj().todoState[a.id] = { done: cb.checked, at: new Date().toISOString() };
         row.classList.toggle('done', cb.checked);
-        touch();
+        touch(); updateDots();
       });
       var body = h('div', { class: 't-body' });
       body.appendChild(h('div', { class: 't-title' }, a.name, ' ', h('span', { class: 'tag' }, a.id)));
@@ -760,23 +789,24 @@
       }
       if (a.sourceIds && a.sourceIds.length) body.appendChild(h('div', { class: 't-meta' }, sourceLinks(a.sourceIds)));
       row.appendChild(cb); row.appendChild(body);
-      g5.appendChild(row);
+      g4.appendChild(row);
     });
     if (sc.materialList.length) {
       var mt = h('table', { class: 't' });
       mt.appendChild(h('thead', {}, h('tr', {}, h('th', {}, '材料'), h('th', {}, '企业准备状态'), h('th', {}, '专业复核'))));
       var tb = h('tbody', {});
       sc.materialList.forEach(function (m) {
-        tb.appendChild(h('tr', {}, h('td', {}, m.name + ' '), h('td', {}, m.prep || '未提供'), h('td', {}, m.review || '未复核')));
+        tb.appendChild(h('tr', {}, h('td', {}, m.name), h('td', {}, m.prep || '未提供'), h('td', {}, m.review || '未复核')));
       });
       mt.appendChild(tb);
-      g5.appendChild(mt);
+      g4.appendChild(h('div', { class: 'tbl-wrap' }, mt));
     }
-    host.appendChild(g5);
+    host.appendChild(g4);
   }
-  $('btnRunCompliance').addEventListener('click', function () { renderCompliance(false); });
+  $('btnBack1').addEventListener('click', function () { showTab('product'); });
+  $('btnNext2').addEventListener('click', function () { showTab('tax'); });
 
-  /* ================= 模块 4：HS 与税费 ================= */
+  /* ================= 第 3 步：HS 与税费 ================= */
   function taxInput() {
     var p = proj();
     var t = p.tax;
@@ -810,9 +840,8 @@
       sales_state: t.salesState || '',
       quantity: t.quantity === '' ? null : Number(t.quantity)
     };
-    if (t.currency && !['SGD'].includes(t.currency) && input.market === 'SG') {
-      input.fx_record = { rate: t.fxRate === '' ? null : Number(t.fxRate), source: t.fxSource || '' };
-    } else if (t.currency && !['AUD'].includes(t.currency) && input.market === 'AU') {
+    var native = p.scenario.market === 'SG' ? 'SGD' : (p.scenario.market === 'AU' ? 'AUD' : '');
+    if (native && t.currency && t.currency !== native) {
       input.fx_record = { rate: t.fxRate === '' ? null : Number(t.fxRate), source: t.fxSource || '' };
     }
     return input;
@@ -822,29 +851,28 @@
     clear(host);
     var p = proj();
     if (!p.scenario.market || !p.scenario.subcategoryId) {
-      host.appendChild(h('div', { class: 'banner warn' }, '请先在第 2 步完成目的地与产品小类登记。'));
+      host.appendChild(h('div', { class: 'banner warn' }, '请先完成第 1 步的目的地与品类登记。'));
       return;
     }
     var sub = subById(p.scenario.subcategoryId);
     var sc = runCompliance();
 
-    // HS 候选
     var hsCard = h('div', { class: 'card' });
     hsCard.appendChild(h('h3', {}, '目的国 HS 候选方向'));
-    hsCard.appendChild(h('div', { class: 'banner warn' }, 'HS 候选只是归类研究方向，不是海关最终归类；最终编码以目的国海关税则与个案裁定为准。'));
     var cands = sc ? sc.hsCandidates : [];
     if (!cands.length) {
-      hsCard.appendChild(h('div', { class: 'banner bad' }, '当前「' + sub.name + ' × ' + (JUR[p.scenario.market] ? JUR[p.scenario.market].name : p.scenario.market) + '」组合尚无经来源关联的目的国 HS 候选。这是数据包的明确缺口：不能冒充有归类结论，也不按零税率处理。'));
+      hsCard.appendChild(h('div', { class: 'banner bad' }, '当前「' + sub.name + ' × ' + (JUR[p.scenario.market] ? JUR[p.scenario.market].name : p.scenario.market) + '」组合尚无经来源关联的目的国 HS 候选。这是数据包的明确缺口：不冒充归类结论，也不按零税率处理。'));
     } else {
+      hsCard.appendChild(h('div', { class: 'banner warn' }, 'HS 候选只是归类研究方向，不是海关最终归类；最终编码以目的国税则与个案裁定为准。'));
       cands.forEach(function (c) {
         var on = p.hsChoice === c.id;
         var item = h('div', { class: 'rule-item' + (on ? ' state-applicable' : '') });
         var head = h('div', { class: 'head' });
         var radio = h('input', { type: 'radio', name: 'hsChoice', value: c.id });
         radio.checked = on;
-        radio.addEventListener('change', function () { proj().hsChoice = c.id; touch(); renderTax(); });
+        radio.addEventListener('change', function () { proj().hsChoice = c.id; touch(); renderTax(); updateDots(); });
         head.appendChild(radio);
-        head.appendChild(h('b', {}, c.code + ' '));
+        head.appendChild(h('b', {}, c.code));
         head.appendChild(h('span', { class: 'tag' }, c.market));
         head.appendChild(h('span', { class: 'tag warn' }, '候选方向'));
         item.appendChild(head);
@@ -855,11 +883,9 @@
         item.appendChild(meta);
         hsCard.appendChild(item);
       });
-      hsCard.appendChild(h('p', { class: 'subhint' }, '选择一个候选后，下方税费测算将使用该编码前缀匹配已核税率画像。'));
     }
     host.appendChild(hsCard);
 
-    // 税费测算
     var market = p.scenario.market;
     var card = h('div', { class: 'card' });
     card.appendChild(h('h3', {}, '税费阶段测算（' + (market === 'SG' ? '新加坡' : market === 'AU' ? '澳大利亚' : JUR[market] ? JUR[market].name : market) + '）'));
@@ -869,11 +895,10 @@
       return;
     }
     var f = p.tax;
-    var fields = h('div', {});
-    function numField(label, key, step) {
+    function numField(label, key) {
       var lab = h('label', { class: 'f' }, label);
-      var inp = h('input', { type: 'number', step: step || 'any', min: '0', value: f[key] === '' || f[key] === null || f[key] === undefined ? '' : String(f[key]) });
-      inp.addEventListener('change', function () { f[key] = inp.value; touch(); });
+      var inp = h('input', { type: 'number', step: 'any', min: '0', value: f[key] === '' || f[key] === null || f[key] === undefined ? '' : String(f[key]) });
+      inp.addEventListener('change', function () { f[key] = inp.value; touch(); recomputeTax(result); });
       lab.appendChild(inp);
       return lab;
     }
@@ -881,43 +906,44 @@
       var lab = h('label', { class: 'f' }, label);
       var s = h('select', {});
       opts.forEach(function (o) { s.appendChild(h('option', { value: o[0] }, o[1])); });
-      s.value = f[key] || '';
-      s.addEventListener('change', function () { f[key] = s.value; touch(); renderTax(); });
+      s.value = f[key] === true ? 'true' : (f[key] || '');
+      s.addEventListener('change', function () { f[key] = s.value; touch(); recomputeTax(result); });
       lab.appendChild(s);
       return lab;
     }
     var currencyOpts = market === 'SG' ? [['SGD', 'SGD 新加坡元'], ['CNY', 'CNY 人民币'], ['USD', 'USD 美元']] : [['AUD', 'AUD 澳元'], ['CNY', 'CNY 人民币'], ['USD', 'USD 美元']];
+    var fields = h('div', {});
     fields.appendChild(h('div', { class: 'fields' },
       numField('货值（' + (f.currency || '计价币种') + '）', 'goodsValue'),
       selField('币种', 'currency', currencyOpts),
       numField('国际运费', 'freight'),
       numField('国际保险费', 'insurance'),
-      numField('数量（台/套，用于分摊展示）', 'quantity'),
+      numField('数量（台/套）', 'quantity'),
       selField('贸易术语', 'incoterm', [['FOB', 'FOB（不含国际运保）'], ['CIF', 'CIF（已含国际运保）'], ['DDP', 'DDP（到门含税总价）'], ['other', '其他/未确定']]),
       selField('原产地', 'origin', [['CN', '中国 CN'], ['other', '其他国家/未确认']]),
-      selField('特殊估价（需专业结论）', 'specialValuation', [['no', '否——按常规估价'], ['yes', '是'], ['unknown', '不确定']])
+      selField('特殊估价', 'specialValuation', [['no', '否——按常规估价'], ['yes', '是'], ['unknown', '不确定']])
     ));
-    if (f.incoterm === 'DDP') {
-      fields.appendChild(h('div', { class: 'banner warn' }, 'DDP 含税总价不能倒算海关价值：需提供经专业确认的海关价值与费用拆分（下方两栏），否则税基被阻断。合同费用承担（DDP 由卖方承担）与法定税率是两回事。'));
-      fields.appendChild(h('div', { class: 'fields' },
-        numField('经专业确认的海关价值', 'confirmedCustomsValue'),
-        selField('是否经专业确认', 'valuationConfirmed', [['', '未确认'], [true, '已确认']]) // 简化为选择
-      ));
-    }
-    if (f.currency !== (market === 'SG' ? 'SGD' : 'AUD')) {
+    if (f.currency && f.currency !== (market === 'SG' ? 'SGD' : 'AUD')) {
       fields.appendChild(h('div', { class: 'fields' },
         numField('汇率（1 外币 = ? ' + (market === 'SG' ? 'SGD' : 'AUD') + '）', 'fxRate'),
-        h('label', { class: 'f' }, '汇率来源及日期（法定汇率记录）', (function () {
+        h('label', { class: 'f' }, '汇率来源及日期', (function () {
           var inp = h('input', { type: 'text', value: f.fxSource || '', placeholder: '例如：中国人民银行 2026-11-04 中间价' });
-          inp.addEventListener('change', function () { f.fxSource = inp.value; touch(); });
+          inp.addEventListener('change', function () { f.fxSource = inp.value; touch(); recomputeTax(result); });
           return inp;
         })())
+      ));
+    }
+    if (f.incoterm === 'DDP') {
+      fields.appendChild(h('div', { class: 'banner warn' }, 'DDP 含税总价不能倒算税基：需提供经专业确认的海关价值与费用拆分。合同费用承担（DDP 由卖方承担）与法定税率是两回事。'));
+      fields.appendChild(h('div', { class: 'fields' },
+        numField('经专业确认的海关价值', 'confirmedCustomsValue'),
+        selField('是否经专业确认', 'valuationConfirmed', [['', '未确认'], ['true', '已确认']])
       ));
     }
     if (market === 'SG') {
       fields.appendChild(h('div', { class: 'fields' },
         selField('进口路线', 'importRoute', [['bulk', '普通批量进口'], ['low_value', '低值路线'], ['postal', '空邮/邮寄']]),
-        selField('进口前是否存在多次销售', 'multipleSales', [['', '否'], [true, '是——需最后买方申报价']]),
+        selField('进口前多次销售', 'multipleSales', [['', '否'], ['true', '是']]),
         numField('最后买方申报价（如多次销售）', 'lsp')
       ));
     }
@@ -926,46 +952,29 @@
         numField('海关价值 CV（经确认，AUD）', 'customsValueConfirmed'),
         selField('运输方式（生物安全费需要）', 'transport', [['sea', '海运'], ['air', '空运']]),
         selField('销售州（电气安全提示用）', 'salesState', [['VIC', '维州 VIC'], ['other', '其他州/未指定']]),
-        selField('优惠原产情景（ChAFTA）', 'originPreference', [['none', '不申请优惠'], ['conditional', '拟申请——条件未复核'], ['reviewed', '已复核——需勾选下方三项']])
+        selField('ChAFTA 优惠情景', 'originPreference', [['none', '不申请优惠'], ['conditional', '拟申请——条件未复核'], ['reviewed', '已复核——需三项声明']])
       ));
       if (f.originPreference === 'reviewed') {
-        fields.appendChild(h('div', { class: 'banner warn' }, 'ChAFTA 零关税只有在「PSR 满足 + 原产证明有效 + 运输条件满足」三项同时成立时才可启用；当前数据包未运行 HS 特定 PSR 自动判断，以下声明由用户负责并留痕。'));
         fields.appendChild(h('div', { class: 'fields' },
-          selField('PSR 已满足', 'psrSatisfied', [['', '未确认'], [true, '已满足'], ['unknown', '不确定']]),
-          selField('原产证明有效', 'docsValid', [['', '未确认'], [true, '有效']]),
-          selField('运输条件满足（直接运输）', 'transportCond', [['', '未确认'], [true, '满足']])
+          selField('PSR 已满足', 'psrSatisfied', [['', '未确认'], ['true', '已满足'], ['unknown', '不确定']]),
+          selField('原产证明有效', 'docsValid', [['', '未确认'], ['true', '有效']]),
+          selField('运输条件满足', 'transportCond', [['', '未确认'], ['true', '满足']])
         ));
       }
     }
     fields.appendChild(h('div', { class: 'fields' },
-      selField('贸易救济/附加措施核查', 'remedyCheck', [['', '尚未核查'], ['confirmed_clear', '已核查：无适用措施'], ['measures_found', '发现适用措施——需另行计入']]))
-    );
+      selField('贸易救济/附加措施核查', 'remedyCheck', [['', '尚未核查'], ['confirmed_clear', '已核查：无适用措施'], ['measures_found', '发现适用措施']])
+    ));
     card.appendChild(fields);
-
-    var runBtn = h('button', { class: 'btn', style: 'margin-top:8px' }, '计算税费');
     var result = h('div', {});
-    runBtn.addEventListener('click', function () {
-      runBtn.disabled = true;
-      runBtn.innerHTML = '';
-      runBtn.appendChild(h('span', { class: 'spin' }));
-      runBtn.appendChild(document.createTextNode('计算中'));
-      setTimeout(function () {
-        try {
-          renderTaxResult(result, E.calculateTaxes(D, taxInput()));
-        } catch (e) {
-          result.appendChild(h('div', { class: 'banner bad' }, '税费计算失败：' + e.message));
-          toast('税费计算失败：' + e.message, 'err');
-        } finally {
-          runBtn.disabled = false;
-          runBtn.textContent = '重新计算税费';
-        }
-      }, 100);
-    });
-    card.appendChild(runBtn);
     card.appendChild(result);
     host.appendChild(card);
-    // 首次自动展示一次结果（基于当前输入）
-    renderTaxResult(result, E.calculateTaxes(D, taxInput()));
+    recomputeTax(result);
+  }
+  function recomputeTax(host) {
+    try { renderTaxResult(host, E.calculateTaxes(D, taxInput())); }
+    catch (e) { clear(host); host.appendChild(h('div', { class: 'banner bad' }, '计算失败：' + e.message)); }
+    updateDots();
   }
   function renderTaxResult(host, tax) {
     clear(host);
@@ -985,15 +994,11 @@
           h('td', {}, l.status === 'indicative' ? h('span', { class: 'tag warn' }, '指示性') : l.status === 'blocked' ? h('span', { class: 'tag bad' }, '阻断') : h('span', { class: 'tag ok' }, '已算'))));
       });
       t.appendChild(tb);
-      host.appendChild(h('h4', {}, '计算明细（按有依据的公式逐行输出）'));
       host.appendChild(h('div', { class: 'tbl-wrap' }, t));
-      var summary = h('div', {});
-      summary.appendChild(h('p', {}, '已知法定分项小计：', h('b', {}, tax.known_statutory_subtotal === null ? '不可用（存在被阻断分项）' : fmtMoney(tax.known_statutory_subtotal, tax.currency))));
-      summary.appendChild(h('p', {}, '完整进口法定总额：', h('b', { style: tax.complete_total === null ? 'color:var(--bad)' : 'color:var(--ok)' },
-        tax.complete_total === null ? '不可用' : fmtMoney(tax.complete_total, tax.currency))));
-      if (tax.conditional_preferential_scenario) summary.appendChild(h('p', { class: 'subhint' }, '优惠情景说明：' + tax.conditional_preferential_scenario));
-      if (tax.preferential_duty_saving !== null && tax.preferential_duty_saving !== undefined && tax.preferential_duty_saving > 0) summary.appendChild(h('p', { class: 'subhint' }, '如优惠成立，可节省关税约：' + fmtMoney(tax.preferential_duty_saving, tax.currency)));
-      host.appendChild(summary);
+      host.appendChild(h('p', {}, '已知法定分项小计：', h('b', {}, tax.known_statutory_subtotal === null ? '不可用（存在被阻断分项）' : fmtMoney(tax.known_statutory_subtotal, tax.currency)),
+        '；完整进口法定总额：', h('b', { style: tax.complete_total === null ? 'color:var(--red)' : 'color:var(--ok)' }, tax.complete_total === null ? '不可用' : fmtMoney(tax.complete_total, tax.currency))));
+      if (tax.conditional_preferential_scenario) host.appendChild(h('p', { class: 'subhint' }, '优惠情景说明：' + tax.conditional_preferential_scenario));
+      if (tax.preferential_duty_saving !== null && tax.preferential_duty_saving !== undefined && tax.preferential_duty_saving > 0) host.appendChild(h('p', { class: 'subhint' }, '如优惠成立，可节省关税约：' + fmtMoney(tax.preferential_duty_saving, tax.currency)));
     } else {
       host.appendChild(h('div', { class: 'banner bad' }, (tax.blockers && tax.blockers[0]) || '无法计算。'));
     }
@@ -1007,43 +1012,42 @@
     }
     (tax.warnings || []).forEach(function (w) { host.appendChild(h('div', { class: 'banner warn' }, '提示：' + w)); });
     (tax.assumptions || []).forEach(function (a) { host.appendChild(h('div', { class: 'subhint' }, '测算假设：' + a)); });
-    host.appendChild(h('div', { class: 'subhint', style: 'margin-top:6px' }, '计算依据快照：' + tax.snapshotDate + '；分项金额可由同一组输入复算。货值、汇率、措施状态变化后请重新计算。'));
+    host.appendChild(h('div', { class: 'subhint', style: 'margin-top:6px' }, '计算依据快照：' + tax.snapshotDate + '；金额可由同一组输入复算。'));
   }
+  $('btnBack2').addEventListener('click', function () { showTab('compliance'); });
+  $('btnNext3').addEventListener('click', function () { showTab('news'); });
 
-  /* ================= 模块 5：新闻雷达 ================= */
+  /* ================= 第 4 步：新闻雷达 ================= */
   var newsFilter = { market: '', category: '', kw: '', projectOnly: false };
   function renderNews() {
     var host = $('newsBody');
     clear(host);
     var p = proj();
     var meta = NEWS.meta || {};
-    var cov = h('div', { class: 'banner info' });
-    cov.appendChild(h('b', {}, '来源与覆盖说明：'));
-    cov.appendChild(document.createTextNode(' 新闻快照来自政府官方 RSS/Atom 公告（见来源状态），由 GitHub Actions 定时采集（北京时间约 09:17 / 17:17）。这是定时更新的公告快照，不是实时监控；也不覆盖全网舆情或社交平台情感监测。官方新闻不自动等于已生效法规——生效日期以法规原文为准。'));
-    host.appendChild(cov);
+    host.appendChild(h('div', { class: 'banner info' },
+      h('b', {}, '来源与覆盖边界：'),
+      document.createTextNode(' 新闻快照来自政府官方 RSS/Atom 公告，由 GitHub Actions 定时采集（北京时间约 09:17 / 17:17），是定时更新的公告快照，不是实时监控，也不覆盖全网舆情或社交平台情感监测。官方新闻不自动等于已生效法规——生效日期以法规原文为准。')));
 
     if (!NEWS.items.length) {
       host.appendChild(h('div', { class: 'banner bad' }, '新闻快照为空或未加载（data/news.js 缺失）。请运行采集程序或检查部署文件。'));
       return;
     }
-    var status = h('div', { class: 'card' });
-    status.appendChild(h('h3', {}, '快照状态'));
-    status.appendChild(h('p', { class: 'subhint' }, '快照更新时间：' + fmtDateTime(meta.exportedAt) + '；共 ' + NEWS.items.length + ' 条；' + (meta.snapshotNote || '')));
-    if (meta.allFailed) status.appendChild(h('div', { class: 'banner bad' }, '最近一次采集全部来源失败：已保留最后成功快照及其时间，请查看仓库 Actions 日志与采集状态。'));
+    var status = h('details', { class: 'box' });
+    status.appendChild(h('summary', {}, '快照状态：更新于 ' + fmtDateTime(meta.exportedAt) + '，共 ' + NEWS.items.length + ' 条'));
+    if (meta.allFailed) status.appendChild(h('div', { class: 'banner bad' }, '最近一次采集全部来源失败：已保留最后成功快照与时间。'));
     var st = h('table', { class: 't' });
     st.appendChild(h('thead', {}, h('tr', {}, h('th', {}, '来源'), h('th', {}, '市场'), h('th', {}, '状态'))));
     var tb = h('tbody', {});
     (meta.sources || []).forEach(function (s) {
       tb.appendChild(h('tr', {}, h('td', {}, s.name), h('td', {}, s.market),
-        h('td', {}, s.status === 'ok' ? h('span', { class: 'tag ok' }, '采集成功 ' + (s.count || '')) : s.status === 'error' ? h('span', { class: 'tag bad' }, '失败：' + (s.error || '').slice(0, 60)) : h('span', { class: 'tag' }, '待首次采集'))));
+        h('td', {}, s.status === 'ok' ? h('span', { class: 'tag ok' }, '成功 ' + (s.count || '')) : s.status === 'error' ? h('span', { class: 'tag bad' }, '失败：' + (s.error || '').slice(0, 60)) : h('span', { class: 'tag' }, '待首次采集'))));
     });
     st.appendChild(tb);
     status.appendChild(h('div', { class: 'tbl-wrap' }, st));
     host.appendChild(status);
 
-    // 筛选
     var fc = h('div', { class: 'card' });
-    fc.appendChild(h('h3', {}, '筛选（市场 / 主题 / 关键词 / 当前项目）'));
+    fc.appendChild(h('h3', {}, '筛选'));
     var markets = [...new Set(NEWS.items.map(function (i) { return i.market; }))];
     var cats = [...new Set(NEWS.items.map(function (i) { return i.category; }))];
     var fs = h('div', { class: 'fields' });
@@ -1060,19 +1064,19 @@
     cSel.addEventListener('change', function () { newsFilter.category = cSel.value; renderNews(); });
     var kwInp = h('input', { type: 'search', value: newsFilter.kw, placeholder: '标题/摘要关键词' });
     kwInp.addEventListener('change', function () { newsFilter.kw = kwInp.value.trim(); renderNews(); });
+    fs.appendChild(h('label', { class: 'f' }, '市场', mSel));
+    fs.appendChild(h('label', { class: 'f' }, '主题分类', cSel));
+    fs.appendChild(h('label', { class: 'f' }, '关键词', kwInp));
     var poLabel = h('label', { class: 'f', style: 'flex-direction:row;align-items:center;gap:6px' });
     var poCb = h('input', { type: 'checkbox' });
     poCb.checked = newsFilter.projectOnly;
     poCb.addEventListener('change', function () { newsFilter.projectOnly = poCb.checked; renderNews(); });
-    poLabel.appendChild(poCb); poLabel.appendChild(document.createTextNode(' 仅显示当前项目目的地'));
-    fs.appendChild(h('label', { class: 'f' }, '市场', mSel));
-    fs.appendChild(h('label', { class: 'f' }, '主题分类', cSel));
-    fs.appendChild(h('label', { class: 'f' }, '关键词', kwInp));
+    poLabel.appendChild(poCb); poLabel.appendChild(document.createTextNode(' 仅当前项目目的地'));
     fs.appendChild(poLabel);
     fc.appendChild(fs);
+    if (p.newsSelected.length) fc.appendChild(h('div', { class: 'banner ok' }, '已选 ' + p.newsSelected.length + ' 条进入建议任务与综合报告。'));
     host.appendChild(fc);
 
-    // 列表
     var projMarketNames = p.scenario.market ? chainOf(p.scenario.market).map(function (c) { return JUR[c] ? JUR[c].name : c; }) : [];
     var items = NEWS.items.filter(function (it) {
       if (newsFilter.projectOnly || newsFilter.market === '__project__') {
@@ -1087,8 +1091,7 @@
     }).slice(0, 200);
 
     var list = h('div', { class: 'card' });
-    list.appendChild(h('h3', {}, '新闻列表（' + items.length + ' 条' + (NEWS.items.length > 200 ? '，显示前 200' : '') + '）'));
-    list.appendChild(h('p', { class: 'subhint' }, '勾选新闻可带入第 6 步分析任务与第 7 步综合报告。每条显示发布时间、来源、快照更新时间与核验状态。'));
+    list.appendChild(h('h3', {}, '新闻列表（' + items.length + ' 条）'));
     items.forEach(function (it) {
       var id = newsId(it);
       var sel = p.newsSelected.indexOf(id) >= 0;
@@ -1098,15 +1101,12 @@
       cb.addEventListener('change', function () {
         if (cb.checked) { if (p.newsSelected.indexOf(id) < 0) p.newsSelected.push(id); }
         else p.newsSelected = p.newsSelected.filter(function (x) { return x !== id; });
-        touch();
+        touch(); renderNews(); updateDots();
       });
       var body = h('div', { class: 'n-body' });
-      var titleA = h('a', { href: it.url || '#', target: '_blank', rel: 'noopener noreferrer' }, it.title || '（无标题）');
-      body.appendChild(h('div', { class: 'n-title' }, titleA));
-      body.appendChild(h('div', { class: 'n-meta' },
-        '发布：' + fmtDate(it.date) + '｜来源：' + (it.source || '—') + '｜市场：' + (it.market || '—') +
-        '｜快照：' + fmtDateTime(meta.exportedAt)));
-      body.appendChild(h('div', {}, h('span', { class: 'tag' }, it.category || '未分类'), h('span', { class: 'tag ' + (it.level === '高' ? 'bad' : it.level === '中' ? 'warn' : '') }, '影响级别：' + (it.level || '中')), h('span', { class: 'tag warn' }, '核验状态：' + (it.verified || '待核验'))));
+      body.appendChild(h('div', { class: 'n-title' }, h('a', { href: it.url || '#', target: '_blank', rel: 'noopener noreferrer' }, it.title || '（无标题）')));
+      body.appendChild(h('div', { class: 'n-meta' }, '发布：' + fmtDate(it.date) + '｜来源：' + (it.source || '—') + '｜市场：' + (it.market || '—') + '｜快照：' + fmtDateTime(meta.exportedAt)));
+      body.appendChild(h('div', {}, h('span', { class: 'tag' }, it.category || '未分类'), h('span', { class: 'tag ' + (it.level === '高' ? 'bad' : it.level === '中' ? 'warn' : '') }, '影响级别：' + (it.level || '中')), h('span', { class: 'tag warn' }, '核验：' + (it.verified || '待核验'))));
       if (it.summary) body.appendChild(h('div', { class: 'n-sum' }, it.summary));
       if (it.impact) body.appendChild(h('div', { class: 'n-impact' }, '规则提示（本地引擎，非千问分析）：' + it.impact));
       row.appendChild(cb); row.appendChild(body);
@@ -1115,8 +1115,92 @@
     if (!items.length) list.appendChild(h('div', { class: 'banner warn' }, '没有符合筛选条件的新闻。'));
     host.appendChild(list);
   }
+  $('btnBack3').addEventListener('click', function () { showTab('tax'); });
+  $('btnNext4').addEventListener('click', function () { showTab('qianwen'); });
 
-  /* ================= 模块 6：千问辅助建议 ================= */
+  /* ================= 第 5 步：千问辅助建议 ================= */
+  var API_SYSTEM_PROMPT = '你是一名面向中国企业小家电出海业务的合规与供应链顾问。请严格按用户任务中「要求的输出结构」作答，使用中文；每条结论附引用依据（法规编号/条款/官方链接）；对缺失信息明确列为待补资料，不得假设企业已取得认证、已确定进口商或已满足准入条件；未知税率与贸易救济不得按零处理；覆盖不足的产品与市场组合要明确说明缺口。';
+  function apiSettings() { return state.settings; }
+  function activeModel() {
+    var st = state.settings;
+    return (st.customModel || '').trim() || st.model || 'qwen-plus';
+  }
+  function apiEndpoint(region, base) {
+    if (base && base.trim()) return base.trim().replace(/\/+$/, '') + '/chat/completions';
+    return region === 'intl'
+      ? 'https://dashscope-intl.aliyuncs.com/compatible-mode/v1/chat/completions'
+      : 'https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions';
+  }
+  function buildApiRequest(task) {
+    var st = state.settings;
+    return {
+      url: apiEndpoint(st.region, st.apiBase),
+      init: {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + st.apiKey },
+        body: JSON.stringify({
+          model: activeModel(), temperature: 0.2, stream: false,
+          messages: [{ role: 'system', content: API_SYSTEM_PROMPT }, { role: 'user', content: task }]
+        })
+      }
+    };
+  }
+  function parseApiResponse(data) {
+    if (data && Array.isArray(data.choices) && data.choices.length && data.choices[0].message && typeof data.choices[0].message.content === 'string') {
+      return { ok: true, text: data.choices[0].message.content, model: data.model || data.choices[0].model || '' };
+    }
+    var msg = (data && (data.message || (data.error && data.error.message))) || '响应格式异常（未找到回复内容）';
+    return { ok: false, error: msg };
+  }
+  var apiAbort = null;
+  function callQianwenApi(task, cb) {
+    var st = state.settings;
+    if (!st.apiKey) { cb({ ok: false, error: '尚未填写 API Key：请展开下方「首次使用：配置 API Key」填写并保存。' }); return; }
+    var req = buildApiRequest(task);
+    apiAbort = (typeof AbortController !== 'undefined') ? new AbortController() : null;
+    var timer = setTimeout(function () { if (apiAbort) apiAbort.abort(); }, 180000);
+    var startedAt = Date.now();
+    var opts = req.init;
+    if (apiAbort) opts.signal = apiAbort.signal;
+    fetch(req.url, opts).then(function (res) {
+      clearTimeout(timer);
+      return res.json().catch(function () { return {}; }).then(function (data) {
+        if (!res.ok) {
+          var detail = (data && (data.message || (data.error && data.error.message))) || '';
+          var msg;
+          if (res.status === 401) msg = 'API Key 无效或未授权。' + detail;
+          else if (res.status === 403) msg = '无权访问该模型或资源。' + detail;
+          else if (res.status === 404) msg = '模型名或接口地址不存在。' + detail;
+          else if (res.status === 429) msg = '请求限流，请稍后重试。' + detail;
+          else msg = 'HTTP ' + res.status + '：' + (detail || '服务端错误');
+          cb({ ok: false, error: msg });
+          return;
+        }
+        var parsed = parseApiResponse(data);
+        if (!parsed.ok) { cb({ ok: false, error: parsed.error }); return; }
+        cb({ ok: true, text: parsed.text, model: parsed.model || activeModel(), elapsed: Date.now() - startedAt });
+      });
+    }).catch(function (err) {
+      clearTimeout(timer);
+      var msg = (err && err.name === 'AbortError') ? '已取消或请求超时（180 秒）。'
+        : '网络或跨域请求失败：' + ((err && err.message) || '未知错误') + '。可改用国际站端点、自建代理地址，或使用下方手动闭环。';
+      cb({ ok: false, error: msg });
+    });
+  }
+  function saveQianwenResponse(text, extra) {
+    var p = proj();
+    p.qianwen.responses.unshift(Object.assign({
+      id: 'R' + Date.now().toString(36), at: new Date().toISOString(), hash: inputHash(), text: String(text || '')
+    }, extra || {}));
+    if (p.qianwen.responses.length > 20) p.qianwen.responses.pop();
+    touch();
+  }
+  function responseBadge(r) {
+    if (r.via === 'api') return h('span', { class: 'tag brand' }, '千问回复（API 调用' + (r.model ? ' · ' + r.model : '') + '）');
+    return h('span', { class: 'tag brand' }, '千问回复（人工导入）');
+  }
+  var apiState = { running: false, started: 0, note: '' };
+
   function buildTaskText() {
     var p = proj();
     var sc = runCompliance();
@@ -1160,7 +1244,6 @@
       lines.push('- 不适用规则 ' + sc.excludedRules.length + ' 条；待规则核验法规 ' + sc.pendingRegulations.length + ' 条');
       sc.gaps.forEach(function (g) { lines.push('- 覆盖缺口：' + g); });
     }
-    // 税费
     var tax = E.calculateTaxes(D, taxInput());
     lines.push('');
     lines.push('## 五、税费阶段测算与缺口');
@@ -1171,7 +1254,6 @@
       lines.push('- 当前目的地没有可复算税费画像：' + (tax.blockers[0] || ''));
     }
     (tax.blockers || []).forEach(function (b) { lines.push('- 阻断原因：' + b); });
-    // 新闻
     if (p.newsSelected.length) {
       lines.push('');
       lines.push('## 六、所选政策新闻线索');
@@ -1195,308 +1277,167 @@
     lines.push('约束：不要虚构认证状态、进口商、税率或生效日期；未知税率与贸易救济不得按零处理；对覆盖不足的产品与市场组合明确说明缺口。');
     return lines.join('\n');
   }
-  /* ---------- 千问 API 直连（用户自带密钥，仅存本机浏览器） ---------- */
-  var API_SYSTEM_PROMPT = '你是一名面向中国企业小家电出海业务的合规与供应链顾问。请严格按用户任务中「要求的输出结构」作答，使用中文；每条结论附引用依据（法规编号/条款/官方链接）；对缺失信息明确列为待补资料，不得假设企业已取得认证、已确定进口商或已满足准入条件；未知税率与贸易救济不得按零处理；覆盖不足的产品与市场组合要明确说明缺口。';
-  function apiSettings() { return state.settings; }
-  function activeModel() {
-    var st = state.settings;
-    return (st.customModel || '').trim() || st.model || 'qwen-plus';
-  }
-  function apiEndpoint(region, base) {
-    if (base && base.trim()) return base.trim().replace(/\/+$/, '') + '/chat/completions';
-    return region === 'intl'
-      ? 'https://dashscope-intl.aliyuncs.com/compatible-mode/v1/chat/completions'
-      : 'https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions';
-  }
-  function buildApiRequest(task) {
-    var st = state.settings;
-    return {
-      url: apiEndpoint(st.region, st.apiBase),
-      init: {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + st.apiKey },
-        body: JSON.stringify({
-          model: activeModel(),
-          temperature: 0.2,
-          stream: false,
-          messages: [
-            { role: 'system', content: API_SYSTEM_PROMPT },
-            { role: 'user', content: task }
-          ]
-        })
-      }
-    };
-  }
-  function parseApiResponse(data) {
-    if (data && Array.isArray(data.choices) && data.choices.length && data.choices[0].message && typeof data.choices[0].message.content === 'string') {
-      return { ok: true, text: data.choices[0].message.content, model: data.model || data.choices[0].model || '' };
-    }
-    var msg = (data && (data.message || (data.error && data.error.message))) || '响应格式异常（未找到回复内容）';
-    return { ok: false, error: msg };
-  }
-  var apiAbort = null;
-  function callQianwenApi(task, cb) {
-    var st = state.settings;
-    if (!st.apiKey) { cb({ ok: false, error: '尚未填写 API Key：请先在上方填写并保存（密钥仅存本机浏览器）。' }); return; }
-    var req = buildApiRequest(task);
-    apiAbort = (typeof AbortController !== 'undefined') ? new AbortController() : null;
-    var timer = setTimeout(function () { if (apiAbort) apiAbort.abort(); }, 180000);
-    var startedAt = Date.now();
-    var opts = req.init;
-    if (apiAbort) opts.signal = apiAbort.signal;
-    fetch(req.url, opts).then(function (res) {
-      clearTimeout(timer);
-      return res.json().catch(function () { return {}; }).then(function (data) {
-        if (!res.ok) {
-          var detail = (data && (data.message || (data.error && data.error.message))) || '';
-          var msg;
-          if (res.status === 401) msg = 'API Key 无效或未授权。' + detail;
-          else if (res.status === 403) msg = '无权访问该模型或资源。' + detail;
-          else if (res.status === 404) msg = '模型名或接口地址不存在。' + detail;
-          else if (res.status === 429) msg = '请求限流，请稍后重试。' + detail;
-          else msg = 'HTTP ' + res.status + '：' + (detail || '服务端错误');
-          cb({ ok: false, error: msg });
-          return;
-        }
-        var parsed = parseApiResponse(data);
-        if (!parsed.ok) { cb({ ok: false, error: parsed.error }); return; }
-        cb({ ok: true, text: parsed.text, model: parsed.model || activeModel(), elapsed: Date.now() - startedAt });
-      });
-    }).catch(function (err) {
-      clearTimeout(timer);
-      var msg = (err && err.name === 'AbortError') ? '已取消或请求超时（180 秒）。'
-        : '网络或跨域请求失败：' + ((err && err.message) || '未知错误') + '。若为网络限制，可在设置中改用国际站端点或自建代理地址；也可改用下方手动闭环。';
-      cb({ ok: false, error: msg });
-    });
-  }
-  function saveQianwenResponse(text, extra) {
-    var p = proj();
-    p.qianwen.responses.unshift(Object.assign({
-      id: 'R' + Date.now().toString(36),
-      at: new Date().toISOString(),
-      hash: inputHash(),
-      text: String(text || '')
-    }, extra || {}));
-    if (p.qianwen.responses.length > 20) p.qianwen.responses.pop();
-    touch();
-  }
-  function responseBadge(r) {
-    if (r.via === 'api') return h('span', { class: 'tag brand' }, '千问回复（API 调用' + (r.model ? ' · ' + r.model : '') + '）');
-    return h('span', { class: 'tag brand' }, '千问回复（人工导入）');
-  }
 
-  var apiState = { running: false, started: 0, note: '', err: '' };
-  function renderApiSettings(host) {
-    var st = apiSettings();
-    var card = h('div', { class: 'card' });
-    card.appendChild(h('h3', {}, '方式一：调用千问 API 在线分析（可选，推荐）'));
-    card.appendChild(h('div', { class: 'banner info' }, '直连阿里云百炼（DashScope）OpenAI 兼容接口，无需复制粘贴：任务自动发送，回复自动保存并合并到综合报告。需要你自己的 DashScope API Key（阿里云百炼控制台获取）；密钥只保存在本机浏览器 localStorage，不进入页面代码、仓库或导出文件；调用费用由你的阿里云账户承担，请勿在公共电脑上保存密钥。没有密钥时可使用下方方式二手动闭环。'));
-    var fields = h('div', { class: 'fields' });
-    var regionSel = h('select', {});
-    regionSel.appendChild(h('option', { value: 'cn' }, '中国大陆（dashscope.aliyuncs.com）'));
-    regionSel.appendChild(h('option', { value: 'intl' }, '国际站（dashscope-intl.aliyuncs.com）'));
-    regionSel.value = st.region || 'cn';
-    var modelSel = h('select', {});
-    ['qwen-plus', 'qwen-turbo', 'qwen-max', 'qwen-flash'].forEach(function (m) {
-      modelSel.appendChild(h('option', { value: m }, m + (m === 'qwen-plus' ? '（默认，均衡）' : m === 'qwen-turbo' ? '（最快最省）' : m === 'qwen-max' ? '（能力最强）' : '')));
-    });
-    modelSel.value = st.model || 'qwen-plus';
-    var keyInp = h('input', { type: 'password', placeholder: 'sk-…（仅保存在本机浏览器）', autocomplete: 'off' });
-    keyInp.value = st.apiKey || '';
-    var customInp = h('input', { type: 'text', value: st.customModel || '', placeholder: '留空使用上方模型' });
-    var baseInp = h('input', { type: 'text', value: st.apiBase || '', placeholder: '留空使用官方端点' });
-    fields.appendChild(h('label', { class: 'f' }, '服务区域', regionSel));
-    fields.appendChild(h('label', { class: 'f' }, '模型', modelSel));
-    fields.appendChild(h('label', { class: 'f' }, 'API Key', keyInp));
-    fields.appendChild(h('label', { class: 'f' }, '自定义模型名（可选）', customInp));
-    fields.appendChild(h('label', { class: 'f' }, '自定义接口地址（可选，填代理网关）', baseInp));
-    card.appendChild(fields);
-    var btnRow = h('div', { style: 'display:flex;gap:8px;flex-wrap:wrap;margin:8px 0' });
-    var saveBtn = h('button', { class: 'btn' }, '保存设置到本机');
-    var testBtn = h('button', { class: 'btn sec' }, '测试连通');
-    var clearBtn = h('button', { class: 'btn danger' }, '清除密钥');
-    btnRow.appendChild(saveBtn); btnRow.appendChild(testBtn); btnRow.appendChild(clearBtn);
-    card.appendChild(btnRow);
-    var note = h('div', { class: 'subhint' });
-    function refreshNote() {
-      var s = apiSettings();
-      note.textContent = '当前：' + (s.region === 'intl' ? '国际站' : '中国大陆') + ' · 模型 ' + activeModel() + ' · ' + (s.apiKey ? '已保存密钥（本机）' : '未保存密钥') + (apiState.note ? '；' + apiState.note : '');
-    }
-    refreshNote();
-    card.appendChild(note);
-    function collectInputs() {
-      Object.assign(state.settings, { region: regionSel.value, model: modelSel.value, customModel: customInp.value, apiKey: keyInp.value.trim(), apiBase: baseInp.value.trim() });
-      persist(false);
-    }
-    saveBtn.addEventListener('click', function () {
-      collectInputs();
-      apiState.note = '设置已保存到本机浏览器。';
-      refreshNote();
-      toast('API 设置已保存到本机（密钥不上传）', 'ok');
-    });
-    testBtn.addEventListener('click', function () {
-      collectInputs();
-      if (!state.settings.apiKey) { toast('请先填写 API Key', 'err'); return; }
-      testBtn.disabled = true; testBtn.innerHTML = '';
-      testBtn.appendChild(h('span', { class: 'spin dark' }));
-      testBtn.appendChild(document.createTextNode('测试中…'));
-      callQianwenApi('连通性测试：请只回复两个字符：OK', function (r) {
-        testBtn.disabled = false; testBtn.textContent = '测试连通';
-        if (r.ok) {
-          apiState.note = '连通测试成功：' + r.model + '，耗时 ' + (r.elapsed / 1000).toFixed(1) + ' 秒。';
-          refreshNote();
-          toast('连通测试成功（' + r.model + '）', 'ok');
-        } else {
-          apiState.note = '连通测试失败：' + r.error;
-          refreshNote();
-          toast('测试失败：' + r.error, 'err');
-        }
-      });
-    });
-    clearBtn.addEventListener('click', function () {
-      if (!window.confirm('确定清除保存在本机浏览器的 API Key？')) return;
-      keyInp.value = '';
-      state.settings.apiKey = '';
-      persist(false);
-      apiState.note = '密钥已清除。';
-      refreshNote();
-      toast('密钥已清除', 'ok');
-    });
-    host.appendChild(card);
-  }
-  function renderApiCall(host) {
-    var card = h('div', { class: 'card' });
-    card.appendChild(h('h3', {}, '在线分析（方式一操作台）'));
-    var runBtn = h('button', { class: 'btn' }, '调用千问 API 生成建议');
-    var stopBtn = h('button', { class: 'btn danger', style: 'display:none' }, '取消');
-    var status = h('p', { class: 'subhint' });
-    function refreshStatus() {
-      if (apiState.running) status.textContent = '正在调用千问 API（' + activeModel() + '）…已用时 ' + Math.round((Date.now() - apiState.started) / 1000) + ' 秒，完成后自动保存到下方回复列表。';
-      else status.textContent = apiState.err ? ('上次调用失败：' + apiState.err) : '点击按钮后：自动生成任务 → 发送至千问 API → 回复自动保存（标记为「API 调用」，含模型名与用时）。';
-    }
-    refreshStatus();
-    runBtn.addEventListener('click', function () {
-      if (apiState.running) return;
-      if (!apiSettings().apiKey) { toast('请先在上方填写并保存 API Key', 'err'); return; }
-      if (!proj().scenario.market || !proj().scenario.subcategoryId) { toast('请先在第 2 步完成目的地与产品小类登记', 'err'); return; }
-      var task = buildTaskText();
-      apiState.running = true;
-      apiState.started = Date.now();
-      apiState.err = '';
-      runBtn.disabled = true;
-      runBtn.innerHTML = '';
-      runBtn.appendChild(h('span', { class: 'spin' }));
-      runBtn.appendChild(document.createTextNode('调用中'));
-      stopBtn.style.display = '';
-      var tick = setInterval(refreshStatus, 1000);
-      callQianwenApi(task, function (r) {
-        clearInterval(tick);
-        apiState.running = false;
-        runBtn.disabled = false;
-        runBtn.textContent = '重新调用千问 API';
-        stopBtn.style.display = 'none';
-        if (r.ok) {
-          saveQianwenResponse(r.text, { via: 'api', model: r.model, elapsed: r.elapsed });
-          apiState.err = '';
-          toast('千问回复已保存（API 调用 · ' + r.model + '，' + (r.elapsed / 1000).toFixed(1) + ' 秒）', 'ok');
-          renderQianwen();
-        } else {
-          apiState.err = r.error;
-          refreshStatus();
-          toast('调用失败：' + r.error, 'err');
-        }
-      });
-    });
-    stopBtn.addEventListener('click', function () { if (apiAbort) apiAbort.abort(); });
-    card.appendChild(h('div', { style: 'display:flex;gap:8px;flex-wrap:wrap' }, runBtn, stopBtn));
-    card.appendChild(status);
-    host.appendChild(card);
-  }
   function renderQianwen() {
     var host = $('qianwenBody');
     clear(host);
     var p = proj();
     var cur = inputHash();
+    var st = apiSettings();
 
-    renderApiSettings(host);
-    renderApiCall(host);
-
-    var card = h('div', { class: 'card' });
-    card.appendChild(h('h3', {}, '方式二：手动闭环（无需密钥）'));
-    card.appendChild(h('div', { class: 'banner info' }, '把任务复制后交给千问办公实际分析，真实回复由你粘贴回本页保存。页面明确区分「规则提示（本地引擎）」「千问回复（API 调用）」与「千问回复（人工导入）」；本页面不会虚构任何千问输出。'));
-    var genBtn = h('button', { class: 'btn' }, '根据当前项目生成分析任务');
-    var ta = h('textarea', { class: 'task', spellcheck: 'false', 'aria-label': '分析任务文本' });
-    ta.value = p.qianwen.taskText || '';
-    var taskMeta = h('p', { class: 'subhint' });
-    function updateTaskMeta() {
-      if (!p.qianwen.taskText) { taskMeta.textContent = '尚未生成任务。'; return; }
-      var same = p.qianwen.taskHash === cur;
-      taskMeta.textContent = '任务生成于 ' + fmtDateTime(p.qianwen.taskAt) + '；输入指纹 ' + p.qianwen.taskHash + (same ? '（与当前输入一致）' : '（当前输入已变化——任务内容可能过时，建议重新生成）');
+    /* 主卡：在线分析 */
+    var main = h('div', { class: 'card' });
+    main.appendChild(h('h3', {}, '在线分析：一键调用千问 API'));
+    main.appendChild(h('p', { class: 'subhint' }, '任务自动根据当前项目生成（含合规结果、税费缺口与所选新闻），回复自动保存并合并进综合报告。'));
+    var runBtn = h('button', { class: 'btn' }, st.apiKey ? '调用千问 API 生成建议' : '调用千问 API（先配置密钥）');
+    var stopBtn = h('button', { class: 'btn danger', style: 'display:none' }, '取消');
+    var status = h('p', { class: 'subhint' });
+    function refreshStatus() {
+      if (apiState.running) status.textContent = '正在调用千问 API（' + activeModel() + '）…已用时 ' + Math.round((Date.now() - apiState.started) / 1000) + ' 秒。';
+      else status.textContent = apiState.err ? ('上次调用失败：' + apiState.err) : (st.apiKey ? ('将使用：' + activeModel() + ' · ' + (st.region === 'intl' ? '国际站' : '中国大陆')) : '首次使用请在下方配置 API Key。');
     }
+    refreshStatus();
+    runBtn.addEventListener('click', function () {
+      if (apiState.running) return;
+      if (!apiSettings().apiKey) { toast('请先展开「首次使用：配置 API Key」填写并保存', 'err'); return; }
+      if (!proj().scenario.market || !proj().scenario.subcategoryId) { toast('请先在第 1 步完成目的地与品类登记', 'err'); return; }
+      var task = buildTaskText();
+      apiState.running = true; apiState.started = Date.now(); apiState.err = '';
+      runBtn.disabled = true; runBtn.innerHTML = '';
+      runBtn.appendChild(h('span', { class: 'spin' })); runBtn.appendChild(document.createTextNode('调用中'));
+      stopBtn.style.display = '';
+      var tick = setInterval(refreshStatus, 1000);
+      callQianwenApi(task, function (r) {
+        clearInterval(tick);
+        apiState.running = false; runBtn.disabled = false;
+        runBtn.textContent = '重新调用千问 API';
+        stopBtn.style.display = 'none';
+        if (r.ok) {
+          saveQianwenResponse(r.text, { via: 'api', model: r.model, elapsed: r.elapsed });
+          toast('千问回复已保存（API 调用 · ' + r.model + '，' + (r.elapsed / 1000).toFixed(1) + ' 秒）', 'ok');
+          renderQianwen(); updateDots();
+        } else {
+          apiState.err = r.error; refreshStatus();
+          toast('调用失败：' + r.error, 'err');
+        }
+      });
+    });
+    stopBtn.addEventListener('click', function () { if (apiAbort) apiAbort.abort(); });
+    main.appendChild(h('div', { style: 'display:flex;gap:8px;flex-wrap:wrap' }, runBtn, stopBtn));
+    main.appendChild(status);
+
+    /* 内嵌折叠设置 */
+    var setBox = h('details', { class: 'box' });
+    setBox.appendChild(h('summary', {}, st.apiKey ? '已配置：' + (st.region === 'intl' ? '国际站' : '中国大陆') + ' · ' + activeModel() + ' · 密钥存本机（点击修改）' : '首次使用：配置 API Key（仅存本机浏览器）'));
+    setBox.appendChild(h('div', { class: 'banner info' }, '直连阿里云百炼（DashScope）OpenAI 兼容接口。需要你自己的 DashScope API Key；密钥仅保存在本机浏览器 localStorage，不进入页面代码、仓库或导出文件；调用费用由你的阿里云账户承担。公共电脑上请用后点「清除密钥」。'));
+    var sf = h('div', { class: 'fields' });
+    var regionSel = h('select', {});
+    regionSel.appendChild(h('option', { value: 'cn' }, '中国大陆（dashscope.aliyuncs.com）'));
+    regionSel.appendChild(h('option', { value: 'intl' }, '国际站（dashscope-intl.aliyuncs.com）'));
+    regionSel.value = st.region || 'cn';
+    var modelSel = h('select', {});
+    ['qwen-plus', 'qwen-turbo', 'qwen-max'].forEach(function (m) {
+      modelSel.appendChild(h('option', { value: m }, m + (m === 'qwen-plus' ? '（默认，均衡）' : m === 'qwen-turbo' ? '（最快最省）' : '（能力最强）')));
+    });
+    modelSel.value = st.model || 'qwen-plus';
+    var keyInp = h('input', { type: 'password', placeholder: 'sk-…', autocomplete: 'off' });
+    keyInp.value = st.apiKey || '';
+    var customInp = h('input', { type: 'text', value: st.customModel || '', placeholder: '自定义模型名（留空用上方）' });
+    var baseInp = h('input', { type: 'text', value: st.apiBase || '', placeholder: '自定义接口地址（网络受限时填代理网关）' });
+    sf.appendChild(h('label', { class: 'f' }, '服务区域', regionSel));
+    sf.appendChild(h('label', { class: 'f' }, '模型', modelSel));
+    sf.appendChild(h('label', { class: 'f' }, 'API Key', keyInp));
+    sf.appendChild(h('label', { class: 'f' }, '自定义模型（可选）', customInp));
+    sf.appendChild(h('label', { class: 'f' }, '自定义接口地址（可选）', baseInp));
+    setBox.appendChild(sf);
+    var sbRow = h('div', { style: 'display:flex;gap:8px;flex-wrap:wrap;margin-top:6px' });
+    var saveBtn = h('button', { class: 'btn sm' }, '保存设置');
+    var testBtn = h('button', { class: 'btn sec sm' }, '测试连通');
+    var clearBtn = h('button', { class: 'btn danger sm' }, '清除密钥');
+    sbRow.appendChild(saveBtn); sbRow.appendChild(testBtn); sbRow.appendChild(clearBtn);
+    setBox.appendChild(sbRow);
+    function collectInputs() {
+      Object.assign(state.settings, { region: regionSel.value, model: modelSel.value, customModel: customInp.value, apiKey: keyInp.value.trim(), apiBase: baseInp.value.trim() });
+      persist(false);
+    }
+    saveBtn.addEventListener('click', function () {
+      collectInputs(); apiState.note = ''; toast('API 设置已保存到本机（密钥不上传）', 'ok'); renderQianwen();
+    });
+    testBtn.addEventListener('click', function () {
+      collectInputs();
+      if (!state.settings.apiKey) { toast('请先填写 API Key', 'err'); return; }
+      testBtn.disabled = true; testBtn.textContent = '测试中…';
+      callQianwenApi('连通性测试：请只回复两个字符：OK', function (r) {
+        testBtn.disabled = false; testBtn.textContent = '测试连通';
+        if (r.ok) { apiState.note = '连通成功（' + r.model + '，' + (r.elapsed / 1000).toFixed(1) + 's）'; toast('连通测试成功', 'ok'); }
+        else { apiState.note = '失败：' + r.error; toast('测试失败：' + r.error, 'err'); }
+        renderQianwen();
+      });
+    });
+    clearBtn.addEventListener('click', function () {
+      if (!window.confirm('确定清除本机保存的 API Key？')) return;
+      state.settings.apiKey = ''; keyInp.value = ''; persist(false); toast('密钥已清除', 'ok'); renderQianwen();
+    });
+    main.appendChild(setBox);
+
+    /* 内嵌手动闭环 */
+    var mBox = h('details', { class: 'box' });
+    mBox.appendChild(h('summary', {}, '不用 API？手动闭环：生成任务 → 复制交给千问办公 → 粘贴回复保存'));
+    var genBtn = h('button', { class: 'btn sec sm' }, '生成分析任务');
+    var copyBtn = h('button', { class: 'btn sec sm' }, '复制任务');
+    var ta = h('textarea', { class: 'task', spellcheck: 'false', readonly: 'readonly', 'aria-label': '分析任务文本' });
+    ta.value = p.qianwen.taskText || '';
+    function updateTaskMeta() {
+      meta.textContent = !p.qianwen.taskText ? '尚未生成任务。'
+        : '生成于 ' + fmtDateTime(p.qianwen.taskAt) + '；指纹 ' + p.qianwen.taskHash + (p.qianwen.taskHash === cur ? '（与当前输入一致）' : '（当前输入已变化，建议重新生成）');
+    }
+    var meta = h('p', { class: 'subhint' });
     genBtn.addEventListener('click', function () {
-      genBtn.disabled = true;
-      genBtn.innerHTML = '';
-      genBtn.appendChild(h('span', { class: 'spin' }));
-      genBtn.appendChild(document.createTextNode('生成中'));
+      genBtn.disabled = true; genBtn.textContent = '生成中…';
       setTimeout(function () {
         try {
           p.qianwen.taskText = buildTaskText();
           p.qianwen.taskHash = inputHash();
           p.qianwen.taskAt = new Date().toISOString();
           ta.value = p.qianwen.taskText;
-          updateTaskMeta();
-          touch();
-          toast('分析任务已生成（基于当前输入指纹 ' + p.qianwen.taskHash + '）', 'ok');
-        } catch (e) {
-          toast('生成失败：' + e.message, 'err');
-        } finally {
-          genBtn.disabled = false;
-          genBtn.textContent = '重新生成分析任务';
-        }
-      }, 150);
+          updateTaskMeta(); touch();
+          toast('任务已生成', 'ok');
+        } catch (e) { toast('生成失败：' + e.message, 'err'); }
+        genBtn.disabled = false; genBtn.textContent = '重新生成分析任务';
+      }, 120);
     });
-    var copyBtn = h('button', { class: 'btn sec', style: 'margin-left:8px' }, '复制任务');
     copyBtn.addEventListener('click', function () {
       if (!ta.value) { toast('请先生成任务', 'err'); return; }
-      var done = function () { toast('已复制到剪贴板，请粘贴给千问办公', 'ok'); };
+      var done = function () { toast('已复制，请粘贴给千问办公', 'ok'); };
       var fail = function () {
         ta.removeAttribute('readonly'); ta.select();
-        try { document.execCommand('copy'); done(); }
-        catch (e) { toast('复制失败：请手动全选文本复制', 'err'); }
+        try { document.execCommand('copy'); done(); } catch (e) { toast('复制失败：请手动全选复制', 'err'); }
         window.getSelection && window.getSelection().removeAllRanges();
       };
-      if (navigator.clipboard && navigator.clipboard.writeText) {
-        navigator.clipboard.writeText(ta.value).then(done, fail);
-      } else fail();
+      if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(ta.value).then(done, fail);
+      else fail();
     });
-    var btnRow = h('div', { style: 'margin:8px 0' }, genBtn, copyBtn);
-    card.appendChild(btnRow);
-    ta.setAttribute('readonly', 'readonly');
-    card.appendChild(ta);
-    card.appendChild(taskMeta);
-    host.appendChild(card);
-
-    // 回复
-    var rc = h('div', { class: 'card' });
-    rc.appendChild(h('h3', {}, '粘贴千问回复并保存'));
-    rc.appendChild(h('p', { class: 'subhint' }, '把千问办公的真实回复粘贴到下方，保存后合并进综合报告；保存时记录当前输入指纹，输入变化后自动显示「需要重新分析」。'));
-    var ra = h('textarea', { class: 'task', placeholder: '在此粘贴千问回复……' });
-    var saveBtn = h('button', { class: 'btn', style: 'margin-top:8px' }, '保存回复到项目');
-    saveBtn.addEventListener('click', function () {
-      if (!ra.value.trim()) { toast('回复内容为空', 'err'); return; }
-      saveQianwenResponse(ra.value.trim(), { via: 'manual' });
-      ra.value = '';
-      toast('回复已保存（输入指纹 ' + inputHash() + '）', 'ok');
-      renderQianwen();
+    var pasteArea = h('textarea', { class: 'task', style: 'min-height:120px', placeholder: '粘贴千问办公的真实回复……' });
+    var pasteSave = h('button', { class: 'btn sec sm', style: 'margin-top:6px' }, '保存粘贴的回复');
+    pasteSave.addEventListener('click', function () {
+      if (!pasteArea.value.trim()) { toast('回复内容为空', 'err'); return; }
+      saveQianwenResponse(pasteArea.value.trim(), { via: 'manual' });
+      toast('回复已保存（人工导入）', 'ok');
+      renderQianwen(); updateDots();
     });
-    rc.appendChild(ra);
-    rc.appendChild(saveBtn);
-    host.appendChild(rc);
+    mBox.appendChild(h('div', { style: 'display:flex;gap:8px;margin:6px 0' }, genBtn, copyBtn));
+    mBox.appendChild(ta);
+    updateTaskMeta();
+    mBox.appendChild(meta);
+    mBox.appendChild(pasteArea);
+    mBox.appendChild(pasteSave);
+    main.appendChild(mBox);
+    host.appendChild(main);
 
-    // 已保存回复
+    /* 回复列表 */
     var lc = h('div', { class: 'card' });
-    lc.appendChild(h('h3', {}, '已保存的千问回复（' + p.qianwen.responses.length + '）'));
-    if (!p.qianwen.responses.length) lc.appendChild(h('p', { class: 'subhint' }, '还没有保存的回复。可通过方式一在线调用或方式二手动粘贴获得。'));
+    lc.appendChild(h('h3', {}, '千问回复（' + p.qianwen.responses.length + '）· 与本地规则提示严格区分'));
+    if (!p.qianwen.responses.length) lc.appendChild(h('p', { class: 'subhint' }, '还没有回复。上方一键调用或手动粘贴均可。'));
     p.qianwen.responses.forEach(function (r) {
       var same = r.hash === cur;
       var item = h('div', { class: 'rule-item ' + (same ? 'state-applicable' : 'state-unknown') });
@@ -1505,28 +1446,28 @@
       head.appendChild(h('span', { class: 'tag' }, '保存于 ' + fmtDateTime(r.at)));
       head.appendChild(same ? h('span', { class: 'tag ok' }, '与当前输入一致') : h('span', { class: 'tag bad' }, '需要重新分析（输入已变化）'));
       item.appendChild(head);
-      var pre = h('div', { class: 'body', style: 'white-space:pre-wrap;font-size:13.5px' }, r.text);
-      item.appendChild(pre);
+      item.appendChild(h('div', { class: 'body', style: 'white-space:pre-wrap;font-size:13.5px' }, r.text));
       var del = h('button', { class: 'btn sm danger', style: 'margin-top:6px' }, '删除该回复');
       del.addEventListener('click', function () {
-        p.qianwen.responses = p.qianwen.responses.filter(function (x) { return x.id !== r.id; });
-        touch(); renderQianwen();
+        proj().qianwen.responses = proj().qianwen.responses.filter(function (x) { return x.id !== r.id; });
+        touch(); renderQianwen(); updateDots();
       });
       item.appendChild(del);
       lc.appendChild(item);
     });
     host.appendChild(lc);
   }
+  $('btnBack4').addEventListener('click', function () { showTab('news'); });
+  $('btnNext5').addEventListener('click', function () { showTab('report'); });
 
-  /* ================= 模块 7：综合报告 ================= */
+  /* ================= 第 6 步：综合报告 ================= */
   function reportData() {
     var p = proj();
     var sc = runCompliance();
     var tax = E.calculateTaxes(D, taxInput());
     var sub = subById(p.scenario.subcategoryId);
     var selectedNews = NEWS.items.filter(function (it) { return p.newsSelected.indexOf(newsId(it)) >= 0; });
-    var cur = inputHash();
-    return { p: p, sc: sc, tax: tax, sub: sub, selectedNews: selectedNews, hash: cur };
+    return { p: p, sc: sc, tax: tax, sub: sub, selectedNews: selectedNews, hash: inputHash() };
   }
   function renderReport() {
     var host = $('reportBody');
@@ -1536,19 +1477,18 @@
 
     var head = h('div', { class: 'card' });
     head.appendChild(h('h2', {}, '远见 · 企业出海综合报告'));
-    head.appendChild(h('p', { class: 'subhint' }, '项目：' + p.name + '｜生成时间：' + fmtDateTime(new Date().toISOString()) + '｜当前输入指纹：' + R.hash + '｜数据快照：' + E.SNAPSHOT_DATE));
-    var snaps = p.reportSnapshots;
-    if (snaps.length) {
-      var latest = snaps[0];
-      if (latest.hash === R.hash) head.appendChild(h('div', { class: 'fresh' }, '最新报告快照（' + fmtDateTime(latest.at) + '）与当前输入一致。'));
-      else head.appendChild(h('div', { class: 'stale' }, '注意：当前输入与最近报告快照（' + fmtDateTime(latest.at) + '，指纹 ' + latest.hash + '）不一致——快照为历史结果，下列内容按当前输入实时重新计算。可点击「保存报告快照」更新基准。'));
+    head.appendChild(h('p', { class: 'subhint' }, '项目：' + p.name + '｜生成时间：' + fmtDateTime(new Date().toISOString()) + '｜输入指纹：' + R.hash + '｜数据快照：' + E.SNAPSHOT_DATE));
+    if (p.reportSnapshots.length) {
+      var latest = p.reportSnapshots[0];
+      head.appendChild(latest.hash === R.hash
+        ? h('div', { class: 'fresh' }, '最新报告快照（' + fmtDateTime(latest.at) + '）与当前输入一致。')
+        : h('div', { class: 'stale' }, '注意：当前输入与最近快照（' + fmtDateTime(latest.at) + '）不一致——快照为历史结果，以下内容由当前输入实时重算。'));
     } else {
-      head.appendChild(h('div', { class: 'banner info' }, '尚未保存报告快照。修改输入后，未另存的旧报告不会继续被当作最新结论；建议在每次评审前点击「保存报告快照」。'));
+      head.appendChild(h('div', { class: 'banner info' }, '尚未保存报告快照；每次评审前建议点击右上「保存报告快照」。'));
     }
-    head.appendChild(h('p', { class: 'subhint' }, '本机保存说明：项目数据保存在本机浏览器 localStorage，属单人本机使用，不是多人协作或团队同步；团队共享请使用导出的 JSON 或打印 PDF。'));
+    head.appendChild(h('p', { class: 'subhint' }, '本机保存说明：项目数据保存在本机浏览器，属单人本机使用，非多人协作。'));
     host.appendChild(head);
 
-    // 1 项目与企业
     var s1 = h('div', { class: 'card' });
     s1.appendChild(h('h3', {}, '1. 企业与项目'));
     var kv = h('dl', { class: 'kv' });
@@ -1563,7 +1503,6 @@
     s1.appendChild(kv);
     host.appendChild(s1);
 
-    // 2 产品事实
     var s2 = h('div', { class: 'card' });
     s2.appendChild(h('h3', {}, '2. 关键产品与经营事实'));
     var facts = engineFacts();
@@ -1583,17 +1522,16 @@
         fb.appendChild(h('tr', {}, h('td', {}, f ? f.name : k), h('td', {}, h('span', { class: 'tag warn' }, '不确定')), h('td', {}, '对应判断保持待确认，不按「否」处理')));
       });
       ft.appendChild(fb);
-      s2.appendChild(ft);
+      s2.appendChild(h('div', { class: 'tbl-wrap' }, ft));
     } else s2.appendChild(h('p', { class: 'subhint' }, '未登记产品事实。'));
     host.appendChild(s2);
 
-    // 3 合规初筛
     var s3 = h('div', { class: 'card' });
     s3.appendChild(h('h3', {}, '3. 法规与合规初筛结论'));
-    if (!R.sc) { s3.appendChild(h('p', { class: 'subhint' }, '未完成登记，无法评估。')); }
+    if (!R.sc) s3.appendChild(h('p', { class: 'subhint' }, '未完成登记，无法评估。'));
     else {
       var sc = R.sc;
-      s3.appendChild(h('p', {}, '覆盖等级：', h('b', {}, sc.coverage.level + '（' + sc.coverage.label + '）'), '；法域链：' + sc.jurisdictionChain.join(' → ') + '；评估基准日期：' + sc.asOf));
+      s3.appendChild(h('p', {}, '覆盖等级：', h('b', {}, sc.coverage.level + '（' + sc.coverage.label + '）'), '；法域链：' + sc.jurisdictionChain.join(' → ') + '；基准日期：' + sc.asOf));
       sc.gaps.forEach(function (g) { s3.appendChild(h('div', { class: 'banner bad' }, '覆盖缺口：' + g)); });
       var rt = h('table', { class: 't' });
       rt.appendChild(h('thead', {}, h('tr', {}, h('th', {}, '规则'), h('th', {}, '结论'), h('th', {}, '义务/原因'), h('th', {}, '依据'))));
@@ -1603,7 +1541,7 @@
           h('td', {}, h('b', {}, r.name), h('div', { class: 'subhint' }, r.id + '｜' + (JUR[r.jurisdiction] ? JUR[r.jurisdiction].name : r.jurisdiction))),
           h('td', {}, h('span', { class: 'tag ' + cls }, stateLabel)),
           h('td', {}, r.state === 'unknown' ? ('待补：' + (r.missingFields || []).map(function (k) { var f = lookupField(k); return f ? f.name : k; }).join('、')) : (r.state === 'not_applicable' ? ((r.dateActive === false ? r.dateReason + '；' : '') + (r.notApplicable || '条件不满足')) : (r.obligation || ''))),
-          h('td', {}, h('div', { class: 'subhint' }, (r.locator ? r.locator + '　' : '') + ''), sourceLinks(r.sourceIds))));
+          h('td', {}, h('div', { class: 'subhint' }, r.locator || ''), sourceLinks(r.sourceIds))));
       }
       sc.applicableRules.forEach(function (r) { ruleRow(r, r.state === 'review_required' ? '需人工复核' : '可能适用', r.state === 'review_required' ? 'info' : 'ok'); });
       sc.unknownRules.forEach(function (r) { ruleRow(r, '待补事实', 'warn'); });
@@ -1621,7 +1559,6 @@
     }
     host.appendChild(s3);
 
-    // 4 行动与材料
     var s4 = h('div', { class: 'card' });
     s4.appendChild(h('h3', {}, '4. 行动清单与材料（含完成状态）'));
     if (R.sc && R.sc.actionList.length) {
@@ -1638,12 +1575,10 @@
       });
       at.appendChild(ab);
       s4.appendChild(h('div', { class: 'tbl-wrap' }, at));
-      var mats = R.sc.materialList.map(function (m) { return m.name + (m.prep ? '（' + m.prep + '）' : ''); });
-      s4.appendChild(h('p', {}, '涉及材料（' + R.sc.materialList.length + ' 项）：', mats.length ? mats.join('；') : '—'));
-    } else s4.appendChild(h('p', { class: 'subhint' }, '当前没有适用的规则，因此没有生成的行动与材料；这不代表无需办理任何手续，请查看覆盖缺口与待规则核验清单。'));
+      s4.appendChild(h('p', {}, '涉及材料：', R.sc.materialList.map(function (m) { return m.name + (m.prep ? '（' + m.prep + '）' : ''); }).join('；') || '—'));
+    } else s4.appendChild(h('p', { class: 'subhint' }, '当前没有适用规则生成的行动与材料；不代表无需办理手续，请查看缺口与待核验清单。'));
     host.appendChild(s4);
 
-    // 5 HS 与税费
     var s5 = h('div', { class: 'card' });
     s5.appendChild(h('h3', {}, '5. HS 候选与税费阶段测算'));
     if (p.hsChoice) {
@@ -1665,14 +1600,13 @@
       tt.appendChild(tb2);
       s5.appendChild(h('div', { class: 'tbl-wrap' }, tt));
       s5.appendChild(h('p', {}, '已知法定分项小计：', h('b', {}, R.tax.known_statutory_subtotal === null ? '不可用' : fmtMoney(R.tax.known_statutory_subtotal, R.tax.currency)),
-        '；完整总额：', h('b', { style: R.tax.complete_total === null ? 'color:var(--bad)' : 'color:var(--ok)' }, R.tax.complete_total === null ? '不可用' : fmtMoney(R.tax.complete_total, R.tax.currency))));
+        '；完整总额：', h('b', { style: R.tax.complete_total === null ? 'color:var(--red)' : 'color:var(--ok)' }, R.tax.complete_total === null ? '不可用' : fmtMoney(R.tax.complete_total, R.tax.currency))));
       (R.tax.blockers || []).forEach(function (b) { s5.appendChild(h('div', { class: 'banner bad' }, '阻断：' + b)); });
     } else {
       (R.tax.blockers || ['当前目的地无可复算税费画像。']).forEach(function (b) { s5.appendChild(h('div', { class: 'banner bad' }, '税费缺口：' + b)); });
     }
     host.appendChild(s5);
 
-    // 6 新闻
     var s6 = h('div', { class: 'card' });
     s6.appendChild(h('h3', {}, '6. 所选政策新闻（' + R.selectedNews.length + ' 条）'));
     s6.appendChild(h('p', { class: 'subhint' }, '官方新闻不自动等于已生效法规；快照时间 ' + fmtDateTime(NEWS.meta && NEWS.meta.exportedAt) + '。'));
@@ -1681,13 +1615,12 @@
         h('a', { href: it.url, target: '_blank', rel: 'noopener noreferrer' }, it.title),
         '（' + it.source + '，核验：' + (it.verified || '待核验') + '）'));
     });
-    if (!R.selectedNews.length) s6.appendChild(h('p', { class: 'subhint' }, '未选择新闻。可在第 5 步筛选并勾选。'));
+    if (!R.selectedNews.length) s6.appendChild(h('p', { class: 'subhint' }, '未选择新闻。'));
     host.appendChild(s6);
 
-    // 7 千问建议
     var s7 = h('div', { class: 'card' });
-    s7.appendChild(h('h3', {}, '7. 千问辅助建议（人工导入回复 ' + p.qianwen.responses.length + ' 份）'));
-    s7.appendChild(h('p', { class: 'subhint' }, '区分说明：本报告第 3 节的规则结论来自本地规则引擎（规则提示）；以下内容为千问办公人工导入回复，页面不虚构任何模型输出。'));
+    s7.appendChild(h('h3', {}, '7. 千问辅助建议（' + p.qianwen.responses.length + ' 份）'));
+    s7.appendChild(h('p', { class: 'subhint' }, '第 3 节规则结论来自本地引擎（规则提示）；以下为千问回复（API 调用或人工导入），页面不虚构任何模型输出。'));
     if (p.qianwen.responses.length) {
       p.qianwen.responses.forEach(function (r) {
         var same = r.hash === R.hash;
@@ -1699,27 +1632,25 @@
           h('div', { class: 'body', style: 'white-space:pre-wrap;font-size:13.5px' }, r.text)));
       });
     } else {
-      s7.appendChild(h('div', { class: 'banner info' }, '尚无千问回复。可到第 6 步调用千问 API（需自带密钥）或使用手动闭环粘贴保存。'));
+      s7.appendChild(h('div', { class: 'banner info' }, '尚无千问回复。请到第 5 步生成。'));
     }
     host.appendChild(s7);
 
-    // 8 追溯说明
     var s8 = h('div', { class: 'card' });
     s8.appendChild(h('h3', {}, '8. 结论追溯与免责'));
-    s8.appendChild(h('p', { class: 'subhint' }, '每条规则结论均含规则 ID、法域、条款定位与来源链接；税费分项含税率、税基、币种、承担方与来源 ID；新闻含发布时间、来源与核验状态；千问回复含保存时间与输入指纹。'));
-    s8.appendChild(h('p', { class: 'subhint' }, '本报告为合规准备与资料组织工具的输出：不构成正式合规、认证、法律、税务、原产资格或海关归类结论；数据快照 ' + E.SNAPSHOT_DATE + '，覆盖范围与未完成事项见「数据说明」。'));
+    s8.appendChild(h('p', { class: 'subhint' }, '每条规则结论含规则 ID、法域、条款定位与来源链接；税费分项含税率、税基、币种、承担方与来源 ID；新闻含发布时间、来源与核验状态；千问回复含保存时间、来源方式与输入指纹。'));
+    s8.appendChild(h('p', { class: 'subhint' }, '本报告为合规准备与资料组织工具输出：不构成正式合规、认证、法律、税务、原产资格或海关归类结论；数据快照 ' + E.SNAPSHOT_DATE + '。'));
     host.appendChild(s8);
 
-    $('reportHint').textContent = '历史快照 ' + (p.reportSnapshots.length) + ' 份（最新 ' + (p.reportSnapshots[0] ? fmtDateTime(p.reportSnapshots[0].at) : '—') + '）';
+    $('reportHint').textContent = '历史快照 ' + p.reportSnapshots.length + ' 份' + (p.reportSnapshots[0] ? '（最新 ' + fmtDateTime(p.reportSnapshots[0].at) + '）' : '');
   }
   $('btnPrint').addEventListener('click', function () { window.print(); });
-  $('btnExportJson').addEventListener('click', function () {
+  function exportJson() {
     var p = proj();
     var R = reportData();
     var payload = {
       exportedAt: new Date().toISOString(), app: D.meta.app, version: D.meta.version,
-      snapshot: E.SNAPSHOT_DATE, inputHash: R.hash,
-      project: p,
+      snapshot: E.SNAPSHOT_DATE, inputHash: R.hash, project: p,
       computed: {
         coverage: R.sc ? R.sc.coverage : null,
         applicableRules: R.sc ? R.sc.applicableRules.map(function (r) { return { id: r.id, name: r.name, obligation: r.obligation, locator: r.locator, sourceIds: r.sourceIds }; }) : [],
@@ -1728,7 +1659,7 @@
         tax: { currency: R.tax.currency, known_statutory_subtotal: R.tax.known_statutory_subtotal, complete_total: R.tax.complete_total, blockers: R.tax.blockers, lines: R.tax.lines },
         selectedNews: R.selectedNews
       },
-      note: '本文件为项目导出（单人本机使用），非多人协作记录。'
+      note: '项目导出文件（单人本机使用），不含任何 API 密钥。'
     };
     var blob = new Blob([JSON.stringify(payload, null, 1)], { type: 'application/json' });
     var a = document.createElement('a');
@@ -1736,8 +1667,10 @@
     a.download = '远见出海项目-' + (p.name || '未命名') + '-' + new Date().toISOString().slice(0, 10) + '.json';
     document.body.appendChild(a); a.click();
     setTimeout(function () { URL.revokeObjectURL(a.href); a.remove(); }, 500);
-    toast('项目 JSON 已导出', 'ok');
-  });
+    toast('项目 JSON 已导出（不含密钥）', 'ok');
+  }
+  $('btnExportJson').addEventListener('click', exportJson);
+  $('btnExportJsonMini').addEventListener('click', exportJson);
   $('btnSaveSnapshot').addEventListener('click', function () {
     var p = proj();
     var R = reportData();
@@ -1745,7 +1678,7 @@
     if (p.reportSnapshots.length > 10) p.reportSnapshots.pop();
     touch();
     toast('报告快照已保存（指纹 ' + R.hash + '）', 'ok');
-    renderReport();
+    renderReport(); updateDots();
   });
 
   /* ================= 数据说明 ================= */
@@ -1754,24 +1687,23 @@
     clear(host);
     var c = h('div', { class: 'card' });
     c.appendChild(h('h3', {}, '数据来源与快照'));
-    c.appendChild(h('p', { class: 'subhint' }, '整合构建日期：' + D.meta.builtAt + '；原始数据快照：' + D.meta.dataAsOf + '。'));
+    c.appendChild(h('p', { class: 'subhint' }, '整合构建：' + D.meta.builtAt + '；原始数据快照：' + D.meta.dataAsOf + '。'));
     D.meta.dataSources.forEach(function (s) { c.appendChild(h('p', { style: 'margin:4px 0;font-size:13.5px' }, '· ' + s)); });
     c.appendChild(h('p', { class: 'subhint' }, '范围：' + D.meta.scope));
     host.appendChild(c);
 
     var n = h('div', { class: 'card' });
-    n.appendChild(h('h3', {}, '数据规模'));
+    n.appendChild(h('h3', {}, '数据规模与覆盖等级'));
     n.appendChild(h('div', { class: 'legend' },
       h('span', { class: 'tag brand' }, '法规索引 ' + D.regulations.length),
       h('span', { class: 'tag brand' }, '来源记录 ' + D.sources.length),
       h('span', { class: 'tag brand' }, '条件规则 ' + D.rules.length),
       h('span', { class: 'tag brand' }, '产品小类 ' + D.subcategories.length),
-      h('span', { class: 'tag brand' }, '动态问题映射 ' + D.dynamicMap.length),
+      h('span', { class: 'tag brand' }, '动态映射 ' + D.dynamicMap.length),
       h('span', { class: 'tag brand' }, '行动 ' + D.actions.length),
       h('span', { class: 'tag brand' }, '材料 ' + D.materials.length),
       h('span', { class: 'tag brand' }, 'HS 候选 ' + D.hsCandidates.length),
       h('span', { class: 'tag brand' }, '税费画像 ' + D.taxProfiles.length)));
-    n.appendChild(h('h4', {}, '服务覆盖等级'));
     Object.keys(D.meta.levels).forEach(function (k) {
       n.appendChild(h('p', { style: 'margin:4px 0;font-size:13.5px' }, h('span', { class: 'tag brand' }, k), ' ' + D.meta.levels[k]));
     });
@@ -1788,19 +1720,22 @@
     });
     glist.appendChild(gb);
     g.appendChild(h('div', { class: 'tbl-wrap' }, glist));
-    g.appendChild(h('p', { class: 'subhint' }, '覆盖矩阵缺口总数：' + D.gapsSummary.total + '（法域 × 主题矩阵空白、成员国实施缺口与来源访问问题合计，不代表 440 部法规缺失）。'));
+    g.appendChild(h('p', { class: 'subhint' }, '覆盖矩阵缺口合计 ' + D.gapsSummary.total + ' 条（法域 × 主题空白、成员国实施缺口与来源访问问题的合计）。'));
     host.appendChild(g);
 
     var nw = h('div', { class: 'card' });
-    nw.appendChild(h('h3', {}, '新闻更新机制与覆盖边界'));
-    nw.appendChild(h('p', { class: 'subhint' }, 'GitHub Actions 定时采集（北京时间约 09:17 / 17:17，可手动运行）→ 合并去重 → 输出 news.json / news.js 与来源状态 → GitHub Pages 发布。这是定时快照，不是实时监控；来源为政府官方 RSS/Atom 公告，不覆盖全网舆情与社交平台情感监测；采集遵循来源网站访问规则，失败时保留历史快照并记录失败状态。'));
+    nw.appendChild(h('h3', {}, '新闻更新机制与千问 API 边界'));
+    nw.appendChild(h('p', { class: 'subhint' }, 'GitHub Actions 定时采集（北京时间约 09:17 / 17:17，可手动运行）→ 合并去重 → 输出快照与来源状态 → 自动重新发布。定时快照，不是实时监控；来源为政府官方公告，不含全网舆情监测。'));
+    nw.appendChild(h('p', { class: 'subhint' }, '千问 API 直连为可选功能：由用户自带阿里云百炼 API Key，密钥仅存本机浏览器；真实计费调用效果以用户自检为准。'));
     host.appendChild(nw);
 
     var d = h('div', { class: 'card' });
     d.appendChild(h('h3', {}, '免责声明'));
-    d.appendChild(h('p', { class: 'subhint' }, '本工具用于初步合规辅助和资料组织。任何材料勾选、规则匹配、HS 候选或税费结果都不自动构成正式合规、认证、法律、税务、原产资格或海关归类结论。规则、税率、费用或关键事实不完整时，系统显示已知分项与明确缺口，完整结论保持为空。'));
+    d.appendChild(h('p', { class: 'subhint' }, '本工具用于初步合规辅助和资料组织。任何材料勾选、规则匹配、HS 候选或税费结果都不自动构成正式合规、认证、法律、税务、原产资格或海关归类结论。关键事实不完整时，系统显示已知分项与明确缺口，完整结论保持为空。'));
     host.appendChild(d);
   }
+  $('lnkAbout').addEventListener('click', function () { showTab('about'); });
+  $('btnBackAbout').addEventListener('click', function () { showTab(lastFlowTab); });
 
   /* ================= 项目管理 ================= */
   function refreshProjSelect() {
@@ -1813,9 +1748,9 @@
   }
   $('projSelect').addEventListener('change', function () {
     state.currentId = $('projSelect').value;
-    lastCompliance = null;
+    selectedGroup = '';
     persist(false);
-    renderTab(currentTab);
+    showTab(currentTab === 'about' ? 'product' : currentTab);
     toast('已切换项目：' + proj().name, 'ok');
   });
   $('btnNewProj').addEventListener('click', function () {
@@ -1824,7 +1759,7 @@
     var p = defaultProject(name.trim() || '新项目');
     state.projects.unshift(p);
     state.currentId = p.id;
-    lastCompliance = null;
+    selectedGroup = '';
     persist(false);
     refreshProjSelect();
     showTab('product');
@@ -1834,34 +1769,34 @@
     var name = window.prompt('重命名项目：', proj().name);
     if (name === null) return;
     proj().name = name.trim() || proj().name;
-    touch();
-    refreshProjSelect();
-    renderTab(currentTab);
+    touch(); refreshProjSelect(); updateDots();
   });
   $('btnDelProj').addEventListener('click', function () {
     if (state.projects.length <= 1) { toast('至少保留一个项目', 'err'); return; }
-    if (!window.confirm('确定删除项目「' + proj().name + '」？该项目数据将从本机存储移除。')) return;
+    if (!window.confirm('确定删除项目「' + proj().name + '」？本机数据将被移除。')) return;
     var id = proj().id;
     state.projects = state.projects.filter(function (p) { return p.id !== id; });
     state.currentId = state.projects[0].id;
-    lastCompliance = null;
+    selectedGroup = '';
     persist(false);
     refreshProjSelect();
-    renderTab(currentTab);
+    showTab('product');
     toast('项目已从本机存储删除', 'ok');
   });
 
-  /* ================= 标签事件与启动 ================= */
-  document.querySelectorAll('#tabs button').forEach(function (b) {
+  /* ================= 启动 ================= */
+  document.querySelectorAll('#sideNav .nav-item').forEach(function (b) {
     b.addEventListener('click', function () { showTab(b.getAttribute('data-tab')); });
   });
 
   loadState();
+  var firstSub = subById(proj().scenario.subcategoryId);
+  if (firstSub) selectedGroup = firstSub.group;
   refreshProjSelect();
-  showTab('company');
+  showTab('product');
   persist(false);
 
-  /* 测试钩子：仅暴露当前项目读改与重载，不含任何敏感信息 */
+  /* 测试钩子：仅暴露当前项目读写与 API 构造，不含敏感信息 */
   window.__VO_TEST__ = {
     current: function () { return proj(); },
     mutate: function (fn) { fn(proj()); touch(); },
